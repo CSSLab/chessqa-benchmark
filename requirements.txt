@@ -1,0 +1,18 @@
+chess==1.10.0
+numpy==2.1.3
+tqdm==4.65.0
+dataclasses-json==0.6.7
+litellm>=1.40.0
+openai>=1.0.0
+anthropic>=0.25.0
+google-generativeai>=0.5.0
+google-auth>=2.0.0
+cohere>=4.0.0
+httpx>=0.24.0 
+# vllm>=0.6.0  # Disabled - replaced with SGLang for GPT-OSS support
+sglang[all]>=0.5.0  # SGLang with all dependencies for GPT-OSS model support
+torch>=2.0.0
+transformers>=4.36.0
+tokenizers>=0.15.0
+tqdm>=4.64.0
+numpy>=1.24.0 
