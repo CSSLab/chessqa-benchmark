@@ -1,13 +1,13 @@
 import argparse
 import json
 import random
+import hashlib
 import re
 from pathlib import Path
 from typing import Any, Dict, List
 
 import numpy as np
 import tqdm
-from sentence_transformers import SentenceTransformer
 
 from utils import (
     seed_everything,
@@ -116,12 +116,12 @@ def _ensure_unique_options(base_opts: List[str], need: int, all_items: List[Dict
     options = list(dict.fromkeys([o for o in base_opts if o]))  # Remove duplicates and empty
 
     if len(options) < need:
-        # Fill with random options
+        # Scan a shuffled pool until enough *distinct* non-empty comments have
+        # been found. Sampling only ``needed`` indices can underfill whenever
+        # two source rows contain the same normalized comment.
         available = [i for i in range(len(all_items)) if i not in exclude_indices]
-        needed = need - len(options)
-        random_indices = random.sample(available, min(needed, len(available)))
-
-        for idx in random_indices:
+        random.shuffle(available)
+        for idx in available:
             text = all_items[idx].get("_comment_text", "")
             if text and text not in options:
                 options.append(text)
@@ -133,6 +133,14 @@ def _ensure_unique_options(base_opts: List[str], need: int, all_items: List[Dict
 
 def _compute_embeddings(items: List[Dict[str, Any]], cfg) -> np.ndarray:
     """Compute or load cached embeddings for comment texts."""
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError as exc:
+        raise SystemExit(
+            "Semantic distractor generation requires the optional "
+            "sentence-transformers package."
+        ) from exc
+
     cache_dir = Path(cfg.cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     emb_path = cache_dir / "comment_embeddings.npy"
@@ -199,6 +207,15 @@ def _get_semantic_neighbors(idx: int, embeddings: np.ndarray, cfg, k: int = None
     return [int(j) for j in idxs[:k].tolist()]
 
 
+def _base_example_id(item: Dict[str, Any]) -> str:
+    key = "\n".join([
+        " ".join(str(item.get("fen_before", "")).split()[:4]),
+        str(item.get("move_uci", "")),
+        str(item.get("_comment_text", "")),
+    ])
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+
 def generate_comment_mcq_task(item: Dict[str, Any], variant: str, options: List[str], idx: int) -> ChessQuestionAnsweringTask:
     """Generate a single MCQ comment task."""
 
@@ -237,6 +254,7 @@ def generate_comment_mcq_task(item: Dict[str, Any], variant: str, options: List[
         answer_type="single",
         metadata={
             "variant": variant,
+            "base_example_id": _base_example_id(item),
             "options": shuffled_options,
             "correct_text": correct_text,
             "fen_before": item.get("fen_before"),
@@ -248,7 +266,7 @@ def generate_comment_mcq_task(item: Dict[str, Any], variant: str, options: List[
     )
 
 
-def find_comment_tasks_by_variant(items: List[Dict[str, Any]], variant: str, cfg, embeddings: np.ndarray) -> List[ChessQuestionAnsweringTask]:
+def find_comment_tasks_by_variant(items: List[Dict[str, Any]], variant: str, cfg, embeddings: np.ndarray, base_indices=None) -> List[ChessQuestionAnsweringTask]:
     """Generate comment MCQ tasks for a specific variant."""
 
     # Build indices for neighbor finding
@@ -259,7 +277,9 @@ def find_comment_tasks_by_variant(items: List[Dict[str, Any]], variant: str, cfg
     universe = list(range(len(items)))
 
     # Sample indices if needed
-    if cfg.sample_size and cfg.sample_size > 0:
+    if base_indices is not None:
+        base_indices = list(base_indices)
+    elif cfg.sample_size and cfg.sample_size > 0:
         total = len(items)
         k = min(cfg.sample_size, total)
         base_indices = random.sample(list(range(total)), k) if cfg.random_sample else list(range(k))
@@ -337,8 +357,12 @@ def parse_args():
                        help="Number of MCQ tasks per variant")
     parser.add_argument("--sample_size", type=int, default=0,
                        help="Number of items to sample for task generation (0 = all)")
-    parser.add_argument("--random_sample", action="store_true", default=True,
-                       help="Use random sampling instead of sequential")
+    sampling = parser.add_mutually_exclusive_group()
+    sampling.add_argument("--random_sample", dest="random_sample", action="store_true",
+                          help="Sample shared base examples randomly (default)")
+    sampling.add_argument("--sequential_sample", dest="random_sample", action="store_false",
+                          help="Use the first eligible shared base examples")
+    parser.set_defaults(random_sample=True)
 
     # Game phase thresholds
     parser.add_argument("--opening_threshold", type=int, default=12,
@@ -394,11 +418,34 @@ def main():
     variants = ["easy_random", "keyword", "piece_stage", "embedding"]
     all_tasks = []
 
+    # Reuse one explicitly recorded set of base examples across variants.  The
+    # resulting 400 items form 100 four-item clusters when N_sample_mcq=100.
+    base_count = min(cfg.N_sample_mcq, len(items))
+    base_indices = (
+        random.sample(list(range(len(items))), base_count)
+        if cfg.random_sample else list(range(base_count))
+    )
+
     for variant in variants:
         print(f"Generating {variant} tasks...")
-        found = find_comment_tasks_by_variant(items, variant, cfg, embeddings)
+        found = find_comment_tasks_by_variant(items, variant, cfg, embeddings, base_indices)
         all_tasks.extend(found)
         print(f"Generated {len(found)} {variant} tasks")
+
+    expected_ids = {_base_example_id(items[index]) for index in base_indices}
+    generated_by_variant = {
+        variant: {
+            task.metadata["base_example_id"]
+            for task in all_tasks if task.task_type == f"semantic_{variant}"
+        }
+        for variant in variants
+    }
+    for variant, generated_ids in generated_by_variant.items():
+        if generated_ids != expected_ids:
+            raise RuntimeError(
+                f"Variant {variant} did not preserve the shared base set: "
+                f"expected {len(expected_ids)}, generated {len(generated_ids)}"
+            )
 
     # Save all tasks to single file
     save_tasks(all_tasks, cfg.output_filename, cfg)

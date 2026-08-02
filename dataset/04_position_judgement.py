@@ -1,4 +1,5 @@
 import chess
+import chess.engine
 import json
 import random
 import zstandard as zstd
@@ -75,7 +76,8 @@ def _parse_evaluation_line(line: str) -> Optional[Dict[str, Any]]:
             'depth': depth,
             'knodes': knodes,
             'best_line': line_moves,
-            'position_id': position_id
+            'position_id': position_id,
+            'label_provenance': 'lichess_evaluations_heterogeneous_stockfish',
         }
 
     except (ValueError, KeyError):
@@ -131,20 +133,62 @@ def _load_evaluations(data_path: str, max_evaluations: Optional[int] = None) -> 
 
     return evaluations
 
+
+def _relabel_with_fixed_engine(evaluations: List[Dict[str, Any]], cfg) -> List[Dict[str, Any]]:
+    """Optionally replace Lichess labels with a pinned local Stockfish run."""
+    if not cfg.stockfish_path:
+        return evaluations
+
+    relabeled = []
+    engine = chess.engine.SimpleEngine.popen_uci(cfg.stockfish_path)
+    try:
+        options = {}
+        if cfg.stockfish_threads:
+            options['Threads'] = cfg.stockfish_threads
+        if cfg.stockfish_hash_mb:
+            options['Hash'] = cfg.stockfish_hash_mb
+        if options:
+            engine.configure(options)
+        engine_name = engine.id.get('name', 'Stockfish')
+
+        for evaluation in tqdm.tqdm(evaluations, desc="Fixed-engine relabeling"):
+            board = chess.Board(evaluation['fen'])
+            info = engine.analyse(board, chess.engine.Limit(nodes=cfg.stockfish_nodes))
+            score = info['score'].pov(chess.WHITE)
+            centipawns = score.score()
+            if centipawns is None:
+                continue
+            updated = dict(evaluation)
+            updated.update({
+                'best_evaluation': int(centipawns),
+                'depth': info.get('depth'),
+                'knodes': (info.get('nodes') or 0) // 1000,
+                'best_line': ' '.join(move.uci() for move in info.get('pv', [])),
+                'label_provenance': 'fixed_stockfish',
+                'engine_name': engine_name,
+                'engine_nodes': cfg.stockfish_nodes,
+                'engine_threads': cfg.stockfish_threads,
+                'engine_hash_mb': cfg.stockfish_hash_mb,
+            })
+            relabeled.append(updated)
+    finally:
+        engine.quit()
+    return relabeled
+
 def generate_centipawn_eval_task(evaluation: Dict[str, Any], category: str, found_counter: Dict[str, int]) -> ChessQuestionAnsweringTask:
-    task_id = f"position_judgement_{category}_{found_counter[category]:04d}"
+    task_id = f"position_judgment_{category}_{found_counter[category]:04d}"
 
     option_values = _find_best_option_set(evaluation['best_evaluation'])
     correct_answer = _get_correct_answer(evaluation['best_evaluation'], option_values)
 
     prefix = f"You are analyzing a chess position in FEN: {evaluation['fen']}.\n"
-    task_description = "Estimate the Stockfish evaluation in centipawns (from White's perspective). Think deeper about this position: Don't just evaluate the current board state. Consider what the most likely moves are for both sides and how the centipawn evaluation would change as the position develops. Analyze a moves ahead - what does the future of this position look like? How would a strong engine assess this position after calculating many moves deep?Analyze step by step and explain your reasoning.\n"
+    task_description = "Estimate the Stockfish evaluation in centipawns (from White's perspective). Think deeper about this position: do not just evaluate the current board state. Consider the most likely moves for both sides and how the centipawn evaluation would change as the position develops. Analyze several moves ahead: what does the future of this position look like? How would a strong engine assess this position after calculating many moves deep?\n"
     suffix = f"Choose the closest evaluation from the following options: {', '.join(map(str, option_values))}.\nExample final answers: FORMAT_EXAMPLE_PLACEHOLDER"
 
     return ChessQuestionAnsweringTask(
         task_id=task_id,
-        task_type=f"position_judgement_{category}",
-        task_category="Position Judgement",
+        task_type=f"position_judgment_{category}",
+        task_category="Position Judgment",
         input=evaluation['fen'],
         question=construct_prompt(prefix, task_description, suffix),
         format_examples=FORMAT_EXAMPLES_CENTIPAWN,
@@ -157,7 +201,12 @@ def generate_centipawn_eval_task(evaluation: Dict[str, Any], category: str, foun
             "knodes": evaluation['knodes'],
             "best_line": evaluation['best_line'],
             "category": category,
-            "options": option_values
+            "options": option_values,
+            "label_provenance": evaluation.get('label_provenance'),
+            "engine_name": evaluation.get('engine_name'),
+            "engine_nodes": evaluation.get('engine_nodes'),
+            "engine_threads": evaluation.get('engine_threads'),
+            "engine_hash_mb": evaluation.get('engine_hash_mb'),
         }
     )
 
@@ -167,6 +216,7 @@ def find_centipawn_eval_tasks(cfg):
     position_hashes = set()
 
     evaluations = _load_evaluations(cfg.data_path, cfg.max_evaluations if cfg.max_evaluations > 0 else None)
+    evaluations = _relabel_with_fixed_engine(evaluations, cfg)
 
     eval_buckets = defaultdict(list)
 
@@ -193,7 +243,7 @@ def find_centipawn_eval_tasks(cfg):
             task = generate_centipawn_eval_task(evaluation, category, found_counter)
             found_counter[category] += 1
             found.append(task)
-            print(f"Found judgement task in category {category}, total found: {found_counter}")
+            print(f"Found judgment task in category {category}, total found: {found_counter}")
 
     return found
 
@@ -204,6 +254,11 @@ def parse_args():
     parser.add_argument("--max_evaluations", type=int, default=10000)
     parser.add_argument("--tasks_per_category", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--stockfish_path", type=str, default=None,
+                        help="Optional pinned Stockfish binary used to regenerate every label")
+    parser.add_argument("--stockfish_nodes", type=int, default=200000)
+    parser.add_argument("--stockfish_threads", type=int, default=1)
+    parser.add_argument("--stockfish_hash_mb", type=int, default=128)
     return parser.parse_args()
 
 def main():

@@ -35,12 +35,6 @@ import gc
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-try:
-    from vllm import LLM, SamplingParams
-except Exception:
-    print("vLLM is required. Install with: pip install vllm")
-    raise
-
 
 def _setup_env(model_name: str,
                enable_prefix_caching: bool = True,
@@ -127,7 +121,13 @@ def heuristic_is_relevant(text: str) -> bool:
     return False
 
 
-def build_messages(item: Dict[str, Any]) -> List[Dict[str, str]]:
+def build_messages(item: Dict[str, Any], context_mode: str = "observable") -> List[Dict[str, str]]:
+    """Build a relevance judgment using the benchmark-visible context by default.
+
+    ``historical`` is retained only for acquisition diagnostics.  It must not be
+    used as the sole answerability filter because evaluated models do not see
+    the PGN prefix or post-move FEN.
+    """
     comment = item.get("cleaned_comment") or item.get("comment", "")
     fen_before = item.get("fen_before", "")
     fen_after = item.get("fen_after", "")
@@ -137,29 +137,32 @@ def build_messages(item: Dict[str, Any]) -> List[Dict[str, str]]:
     pgn_until = item.get("pgn_until_move", "")
 
     sys = (
-        "You are a strict chess commentary relevance judge. "
-        "Given a single comment and the exact game context (FENs, PGN so far, and the move), decide if the comment is directly useful to understand or evaluate the current move/position in THIS game. "
+        "You are a strict chess commentary answerability judge. "
+        "Decide whether the comment is supported by the information that a benchmark respondent receives. "
         "Output exactly one token: KEEP or DROP."
-        "\nKEEP if and only if the comment provides actionable insight about the current move or position (e.g., mentions pieces/squares, tactical/positional ideas, consequences relevant to this position)."
+        "\nKEEP if and only if the comment is inferable from the pre-move position and move alone and provides concrete insight about that move or position."
         "\nDROP if the comment is generic quotes/aphorisms, meta or biography, audience/event chatter, or otherwise unrelated to the concrete move/position."
+        " Also DROP comments that require prior-play history, future moves not forced by the position, psychology, or time trouble."
     )
 
     usr = (
         f"Comment: {comment}\n"
-        f"Move UCI: {move_uci} | Move number: {move_number} | Side to move: {side_to_move}\n"
+        f"Move UCI: {move_uci}\n"
         f"FEN before: {fen_before}\n"
-        f"FEN after: {fen_after}\n"
-        f"PGN until move: {pgn_until}\n"
-        "Answer strictly with KEEP or DROP."
     )
+    if context_mode == "historical":
+        usr += (
+            f"Move number: {move_number} | Side to move after move: {side_to_move}\n"
+            f"FEN after: {fen_after}\n"
+            f"PGN until move: {pgn_until}\n"
+        )
+    usr += "Answer strictly with KEEP or DROP."
 
     # One tiny few-shot to anchor behavior
     ex_user = (
         "Comment: I will play 40 good moves. If my opponent plays 40 good moves too, we will draw.\n"
-        "Move UCI: e2e4 | Move number: 1 | Side to move: white\n"
+        "Move UCI: e2e4\n"
         "FEN before: startpos\n"
-        "FEN after: <omitted>\n"
-        "PGN until move: 1. e4\n"
         "Answer strictly with KEEP or DROP."
     )
     ex_assistant = "DROP"
@@ -206,6 +209,8 @@ def main() -> int:
     ap.add_argument("--max-records", type=int, default=0)
     ap.add_argument("--max-model-len", type=int, default=4096)
     ap.add_argument("--max-tokens", type=int, default=8)
+    ap.add_argument("--judge-context", choices=["observable", "historical"], default="observable",
+                    help="Use benchmark-visible context by default; historical is diagnostic only")
     ap.add_argument("--tensor-parallel-size", type=int, default=1)
     ap.add_argument("--gpu-memory-utilization", type=float, default=0.80)
     ap.add_argument("--dtype", type=str, default=None, choices=[None, "auto", "float16", "bfloat16", "float32"], nargs='?')
@@ -224,6 +229,14 @@ def main() -> int:
     ap.set_defaults(heuristics=True)
 
     args = ap.parse_args()
+
+    try:
+        from vllm import LLM, SamplingParams
+    except ImportError as exc:
+        raise SystemExit(
+            "This filtering stage requires the optional vLLM package. "
+            "Install a vLLM build compatible with the target CUDA/PyTorch environment."
+        ) from exc
 
     items = load_items(args.input, args.max_records)
     kept: List[Dict[str, Any]] = []
@@ -274,7 +287,7 @@ def main() -> int:
     t0 = time.time()
     for i in range(0, len(to_judge), args.batch_size):
         batch = to_judge[i:i + args.batch_size]
-        prompts = [build_messages(it) for it in batch]
+        prompts = [build_messages(it, args.judge_context) for it in batch]
         chat_kwargs: Dict[str, Any] = {}
         if args.enable_thinking is not None:
             chat_kwargs["chat_template_kwargs"] = {"enable_thinking": bool(args.enable_thinking)}
@@ -317,4 +330,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

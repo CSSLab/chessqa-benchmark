@@ -1,139 +1,129 @@
 # ChessQA: Evaluating Large Language Models for Chess Understanding
 
-ChessQA is a comprehensive, dynamic benchmark that evaluates LLM chess understanding across five ascending levels of abstraction — from basic rules to high‑level semantic reasoning — with objective ground truth and reproducible pipelines for dataset construction, inference, and analysis.
+ChessQA is a text-only, tool-free chess QA benchmark with 50 tasks and 3,500 items across Structural (1,100), Motifs (600), Short Tactics (900), Position Judgment (500), and Semantic (400). The categories are complementary diagnostic views, not a curriculum or a strict difficulty hierarchy. “Chess understanding” is operationalized as performance under the stated QA interface; the score also reflects board-representation parsing and output serialization.
 
-## Abstract
-Chess provides an ideal testbed for evaluating the reasoning, modeling, and abstraction capabilities of large language models (LLMs), as it has well-defined structure and objective ground truth while admitting a wide spectrum of skill levels. However, existing evaluations of LLM ability in chess are ad hoc and narrow in scope, making it difficult to accurately measure LLM chess understanding and how it varies with scale, post-training methodologies, or architecture choices. We present ChessQA, a comprehensive benchmark that assesses LLM chess understanding across five task categories (Structural, Motifs, Short Tactics, Position Judgment, and Semantic), which approximately correspond to the ascending abstractions that players master as they accumulate chess knowledge, from understanding basic rules and learning tactical motifs to correctly calculating tactics, evaluating positions, and semantically describing high-level concepts. In this
-way, ChessQA captures a more comprehensive picture of chess ability and understanding, going significantly beyond the simple move quality evaluations done previously, and offers a controlled, consistent setting for diagnosis and comparison. Furthermore, ChessQA is inherently dynamic, with prompts, answer keys, and construction scripts that can evolve as models improve. Evaluating a range of contemporary LLMs, we find persistent weaknesses across all five categories and provide results and error analyses by category. We will release the code, periodically refreshed datasets, and a public leaderboard to support further research.
+The frozen benchmark and reported model outputs are kept immutable. The current code corrects the interfaces and graders around those files without rewriting results:
 
-## What’s Inside
+- Structural capture/control/protect labels use the standard attack relation. Pinned pieces retain attacked squares; pin status is audit metadata.
+- Every legal mate-in-one move is accepted, including for old JSONL rows that store only the Lichess move.
+- Frozen Motif prompts/labels are repaired at evaluation time for the omitted absolute-pin definition, promotion suffixes in double checks, and battery square ordering; corrected builders emit these forms directly.
+- Strict protocol accuracy, format compliance, and format-relaxed chess-content accuracy are separate fields.
+- FEN, ASCII-board, and explicit-piece-list inputs can be evaluated under otherwise matched prompts.
+- Overall reporting includes item-micro, equal-task macro, and equal-category macro scores.
+- Semantic variants carry stable base-example IDs and the relevance judge defaults to the same FEN-before + move context shown to evaluated models.
+- Position Judgment can be regenerated with a pinned Stockfish binary and fixed node budget; simple chess baselines are included.
 
-- Five categories with objective answer keys and robust extraction
-  - Structural: piece arrangement, legal moves (piece/all), check detection and check‑in‑1, capture/control/protect squares, and state tracking (FEN after UCI sequences)
-  - Motifs: pin, fork, skewer, battery, discovered check, double check
-  - Short Tactics: best‑move puzzles by rating buckets (beginner→expert) and by theme (dozens of tactical themes)
-  - Position Judgment: centipawn evaluation selection across bands (neutral/advantage/winning/…)
-  - Semantic: multiple‑choice commentary understanding with several distractor strategies (keyword, piece+stage, semantic embedding, easy random)
-- OpenRouter evaluation runner with parallelism, resume, cost/tokens tracking, per‑category and per‑task‑type stats
-- Dynamic dataset builders that regenerate as the underlying sources improve
+## Repository layout
 
-## Repository Layout
-
-- `code/dataset`: dataset generation scripts for each category
-- `code/eval`: OpenRouter inference runner and result browser
-- `benchmark`: generated benchmark JSONL files (one per category)
-- `results`: per‑model outputs (`*.jsonl`, `*_pretty.json`, `*_stats.json`)
+- `benchmark/`: frozen benchmark JSONL files
+- `dataset/`: corrected dataset builders
+- `eval/`: OpenRouter runner and shared protocol/scoring code
+- `analysis/`: overlap/label audits, rank stability, Semantic controls, and Position Judgment baselines
+- `tests/`: regression tests for the label and protocol fixes
 
 ## Install
 
-- Python 3.8+
-- `pip install -r requirements.txt`
-- Optional for semantic MCQ embeddings: `pip install sentence-transformers faiss-cpu`
-
-API keys
-- Set `OPENROUTER_API_KEY` in your environment, or put it in `api_keys.json` (see `setup.sh`).
-
-## Data
-
-Place the following under `data/raw/` (paths match defaults in scripts):
-- `lichess_db_puzzle.csv` — Lichess puzzle dump
-- `lichess_db_eval.jsonl.zst` — Engine evaluations (for Position Judgment)
-- `lichess_db_broadcast_2025-04.pgn` — PGN stream (for Structural state tracking)
-- Optional: `chessbase.pgn` / `filtered_chessbase.pgn` — additional PGNs
-
-## Create Benchmark Datasets
-
-Structural
 ```bash
-python code/dataset/01_structural.py \
-  --puzzle_path data/raw/lichess_db_puzzle.csv \
-  --pgn_path data/raw/lichess_db_broadcast_2025-04.pgn \
-  --output_root data/benchmark --N_sample 100
+pip install -r requirements.txt
 ```
 
-Motifs
+Semantic construction additionally needs `sentence-transformers`; its offline cleaning/judging stages need vLLM. Set `OPENROUTER_API_KEY` for inference, or place `openrouter_api_key` in `keys/api_keys.json`.
+
+## Run model evaluation
+
 ```bash
-python code/dataset/02_motifs.py \
-  --puzzle_path data/raw/lichess_db_puzzle.csv \
-  --output_root data/benchmark --N_sample 100
-```
-
-Short Tactics
-```bash
-python code/dataset/03_short_tactics.py \
-  --puzzle_path data/raw/lichess_db_puzzle.csv \
-  --all_themes_path data/info/all_themes_to_include.json \
-  --output_root data/benchmark --N_sample_rating 100 --N_sample_theme 25
-```
-
-Position Judgement
-```bash
-python code/dataset/04_position_judgement.py \
-  --data_path data/raw/lichess_db_eval.jsonl.zst \
-  --output_root data/benchmark --tasks_per_category 100 --max_evaluations 10000
-```
-
-Semantic (MCQ from commentary; requires sentence-transformers)
-```bash
-python code/dataset/05_semantic.py \
-  --input data/mid/comment_dataset.final.json \
-  --output_root data/benchmark --N_sample_mcq 100
-```
-
-Note: comment cleaning and judging helpers for producing `data/mid/comment_dataset.final.json` live in `code/dataset/05_2_comment_cleaning.py` and `code/dataset/05_3_comment_judging.py` (optional, uses vLLM for offline filtering).
-
-## Run Inference (OpenRouter)
-
-Basic run
-```bash
-OPENROUTER_API_KEY=... python code/eval/run_openrouter.py \
+OPENROUTER_API_KEY=... python eval/run_openrouter.py \
   --dataset-root benchmark \
   --model anthropic/claude-3.5-haiku \
-  --output-dir results --workers 256
+  --output-dir results \
+  --workers 8
 ```
 
-Options
-- Limit total tasks: `--max-tasks 800`
-- Uniform sampling per task type: `--N-samples-per-task 50`
-- Add auto‑generated context (piece arrangement + legal moves): `--add-context`
-- Enable “thinking” for models that support it: `--enable-thinking`
-- Re‑evaluate an existing JSONL without calling APIs: `--eval-only`
+Controlled variants:
 
-Outputs
-- `results/<model>.jsonl`: per‑task records with prompts/responses and extraction
-- `results/<model>_pretty.json`: summarized JSON for quick reading
-- `results/<model>_stats.json`: accuracy, per‑category breakdowns, error shares, cost and tokens
+```bash
+# Semantically equivalent board representations
+python eval/run_openrouter.py --representation fen        --run-id fen-01
+python eval/run_openrouter.py --representation ascii      --run-id ascii-01
+python eval/run_openrouter.py --representation piece_list --run-id pieces-01
 
-### Working with Placeholders (for Hugging Face / custom inference)
+# Structured output and independent repeats
+python eval/run_openrouter.py --output-protocol json --run-id json-01
+python eval/run_openrouter.py --temperature 0.7 --run-id temp07-01
 
-The released JSONL files intentionally keep templated prompts so that downstream users can reconstruct different prompting variants. Each task record may contain:
-
-- `CONTEXT_PLACEHOLDER` — replaced at inference time with autogenerated context (piece arrangement + legal moves) when `--add-context` is used.
-- `FORMAT_EXAMPLE_PLACEHOLDER` — replaced with a format example drawn from `format_examples`.
-
-The helper in `code/eval/run_openrouter.py` demonstrates how to resolve these placeholders. Minimal example:
-
-```python
-from code.eval.run_openrouter import format_prompt, get_context
-import json
-
-with open("data/benchmark/motifs.jsonl") as fh:
-    task = json.loads(next(iter(fh)))
-
-prompt = format_prompt(
-    task,
-    add_context=True,            # inject piece arrangement / legal moves
-    format_example_group=1       # choose example variant
-)
-
-# to reproduce OpenRouter usage:
-#   1. call format_prompt for each task
-#   2. send the prompt to your model/backend
-#   3. evaluate responses with extract_answer/evaluate_answer_with_error_type
+# Provider reasoning setting; set the output ceiling explicitly
+python eval/run_openrouter.py --enable-thinking --reasoning-effort medium \
+  --max-tokens 32768 --run-id reasoning-medium-01
 ```
 
-When publishing on Hugging Face, retain the JSONL files as-is and reference this workflow so users can opt into context injection or alternate formatting as needed.
+`--add-context` is the legacy “FEN + Pieces” ablation. It adds only piece arrangement, never legal moves. The default `--run-id new` adds a filename suffix, and explicit representation/protocol/run variants receive their own suffixes, so an ordinary run does not replace an unsuffixed frozen result.
 
-## License
+Each result contains:
 
-MIT License. See `LICENSE` for details.
+- `is_correct`: strict requested-protocol score (the paper’s primary protocol)
+- `format_compliant`: whether the requested terminal line or JSON wrapper was followed
+- `content_correct`: answer correctness after format-relaxed parsing
+- `accepted_answers`: all accepted single answers, including all legal mate-in-one moves
+
+Stats files include item-micro, task-macro, category-macro, format, and content scores. Use `--eval-only` to rescore an existing compatible result file; this is a write operation on that selected result file, so copy it first when preserving an archival artifact.
+
+## Audit benchmark structure
+
+```bash
+python analysis/benchmark_audit.py summary benchmark
+```
+
+The frozen release contains 2,803 unique four-field FEN positions and 1,644 unique Lichess PuzzleIds. Semantic contains 100 unique state–move–gold-comment triples reused under four distractor strategies. The audit command recomputes these counts from the selected files.
+
+## Aggregation and cluster-aware uncertainty
+
+```bash
+python analysis/rank_stability.py results/model-a.jsonl results/model-b.jsonl \
+  --bootstrap 1000 --output rank_stability.json
+```
+
+The bootstrap clusters shared PuzzleIds, Semantic base examples, Position Judgment position IDs, and Structural state-tracking games. Its intervals capture dataset/source sampling, not API endpoint run-to-run variation; use distinct `--run-id` values for independent endpoint repeats.
+
+## Semantic shortcut controls
+
+```bash
+python analysis/semantic_controls.py benchmark/semantic.jsonl semantic_controls
+```
+
+This generates comments-only, move-only, FEN-only, shuffled-FEN, and shuffled-move views without changing options or labels. The original file is the full-prompt condition.
+
+The corrected relevance filter uses observable context by default:
+
+```bash
+python dataset/05_3_comment_judging.py --judge-context observable
+```
+
+`--judge-context historical` is retained only as a diagnostic and must not be used as the sole answerability filter.
+
+## Position Judgment provenance and baselines
+
+The frozen labels use the deepest available records in Lichess Evaluations, which aggregates heterogeneous Stockfish-family browser analyses. To create a controlled reference set:
+
+```bash
+python dataset/04_position_judgement.py \
+  --data_path data/raw/lichess_db_eval.jsonl.zst \
+  --output_root generated/fixed_engine \
+  --stockfish_path /absolute/path/to/stockfish \
+  --stockfish_nodes 200000 --stockfish_threads 1 --stockfish_hash_mb 128
+```
+
+Evaluate material-only, transparent static, cross-validated material/piece-square, and optional shallow-engine baselines:
+
+```bash
+python analysis/position_baselines.py benchmark/position_judgement.jsonl
+python analysis/position_baselines.py benchmark/position_judgement.jsonl \
+  --stockfish /absolute/path/to/stockfish --nodes 5000
+```
+
+## Rebuild datasets
+
+Builders live in `dataset/01_structural.py` through `dataset/05_semantic.py`. Source defaults are documented by `--help`. Semantic now samples one shared set of 100 base examples and verifies that every distractor strategy uses exactly that set. Generated Position Judgment task IDs use the spelling `judgment`; the frozen filename retains `position_judgement.jsonl` for backward compatibility.
+
+## Licensing and provenance
+
+The repository’s MIT license covers code, not third-party source text. Lichess-derived artifacts retain Lichess’s stated source license and provenance. ChessBase-derived commentary is not granted for redistribution by this repository: public redistributable packages should ship code, schemas, state–move records, identifiers, and hashes, while users with their own authorized ChessBase access regenerate comment strings locally.

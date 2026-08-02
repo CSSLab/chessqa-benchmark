@@ -114,7 +114,7 @@ def generate_pin_task(board, found_counter, puzzle_id):
         return None
     prefix = f"You are given a chess position in FEN: {board.fen()}.\n"
     task_description = "Identify all absolute pins in this position. An absolute pin occurs when a piece cannot move because it would expose its own king to check."
-    task_description = " For each pin, provide the key squares in the format: pinning_piece>pinned_piece>target_piece (e.g., FORMAT_EXAMPLE_PLACEHOLDER).\n"
+    task_description += " For each pin, provide the key squares in the format: pinning_piece>pinned_piece>target_piece (e.g., FORMAT_EXAMPLE_PLACEHOLDER).\n"
     suffix = "If more than one, separate with a comma and a space."
     answer_parts = [f"{pinning}>{pinned}>{target}" for pinning, pinned, target in pins]
     correct_answer = ", ".join(answer_parts) if answer_parts else "None"
@@ -281,7 +281,7 @@ def generate_battery_task(board, found_counter, puzzle_id):
     task_description = "Identify every battery (2 or more aligned long-range pieces, e.g, RR/RQ/QQ on files or ranks, BQ/BB/QQ on diagonals, of the same color with no pieces between)."
     task_description += " Report each battery as the squares of the pieces in alphabetical order (a>h, 1>8), using '>' to separate squares in a battery and ',' to separate multiple batteries, e.g., FORMAT_EXAMPLE_PLACEHOLDER.\n"
     suffix = "If more than one, separate with a comma and a space."
-    answer_parts = [">".join(g) for g in batteries]
+    answer_parts = sorted(">".join(sorted(group)) for group in batteries)
     correct_answer = ", ".join(answer_parts)
     assert correct_answer, "Should have at least one battery"
     return ChessQuestionAnsweringTask(
@@ -358,7 +358,7 @@ def detect_discovered_check_moves(board):
                     continue
                 # This is a discovered check
                 if not found_discovered:
-                    results.append((chess.square_name(from_sq), chess.square_name(to_sq), chess.square_name(checker_sq)))
+                    results.append((mv.uci(), chess.square_name(checker_sq)))
                     found_discovered = True
                     break  # Only record once per move
         finally:
@@ -374,7 +374,7 @@ def generate_discovered_check_task(board, found_counter, puzzle_id):
     task_description = "Identify all discovered-check moves (your move uncovers a check from a rook/bishop/queen on the enemy king)."
     task_description += " Report each as UCI move (e.g., FORMAT_EXAMPLE_PLACEHOLDER).\n"
     suffix = "If more than one, separate with a comma and a space."
-    answer_parts = [f"{f}{t}" for (f, t, _) in moves]
+    answer_parts = sorted(uci for uci, _ in moves)
     correct_answer = ", ".join(answer_parts)
     assert correct_answer, "Should have at least one discovered check"
     return ChessQuestionAnsweringTask(
@@ -392,26 +392,23 @@ def generate_discovered_check_task(board, found_counter, puzzle_id):
 
 def detect_double_check_moves(board):
     results = []
-    color = board.turn
     for mv in list(board.legal_moves):
-        from_sq = mv.from_square
-        to_sq = mv.to_square
         board.push(mv)
         try:
             if not board.is_check():
                 continue
             checkers = list(chess.SquareSet(board.checkers()))
             if len(checkers) >= 2:
-                results.append((chess.square_name(from_sq), chess.square_name(to_sq), sorted(chess.square_name(s) for s in checkers)))
+                results.append((mv.uci(), sorted(chess.square_name(s) for s in checkers)))
         finally:
             board.pop()
     uniq = []
     seen = set()
-    for f, t, cs in results:
-        key = (f, t, tuple(cs))
+    for uci, cs in results:
+        key = (uci, tuple(cs))
         if key not in seen:
             seen.add(key)
-            uniq.append((f, t, cs))
+            uniq.append((uci, cs))
     return uniq
 
 
@@ -423,7 +420,7 @@ def generate_double_check_task(board, found_counter, puzzle_id):
     task_description = "Identify all moves that deliver a double check (two pieces give check after the move)."
     task_description += " Report each as UCI move (e.g., FORMAT_EXAMPLE_PLACEHOLDER).\n"
     suffix = "If more than one, separate with a comma and a space."
-    answer_parts = [f"{f}{t}" for (f, t, cs) in moves]
+    answer_parts = sorted(uci for uci, _ in moves)
     correct_answer = ", ".join(answer_parts)
     assert correct_answer, "Should have at least one double check"
     return ChessQuestionAnsweringTask(

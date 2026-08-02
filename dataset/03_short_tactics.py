@@ -2,6 +2,7 @@ import json
 import tqdm
 import argparse
 import pdb
+import chess
 from utils import (
     seed_everything, 
     read_puzzles, 
@@ -23,6 +24,36 @@ def rating_to_level(rating):
         return "advanced"
     else:
         return "expert"
+
+
+def enumerate_legal_mating_moves(fen: str):
+    """Return every legal move that immediately checkmates from ``fen``."""
+    board = chess.Board(fen)
+    mating_moves = []
+    for move in list(board.legal_moves):
+        board.push(move)
+        if board.is_checkmate():
+            mating_moves.append(move.uci())
+        board.pop()
+    return sorted(mating_moves)
+
+
+def acceptable_answers(fen: str, recorded_move: str, themes):
+    """Build the accepted UCI answers for a Lichess puzzle item.
+
+    Lichess guarantees a unique player solution except for mate-in-one, where
+    every legal mating move is valid.  Keep the recorded PV move as the
+    canonical answer while recording the complete accepted set for grading.
+    """
+    themes = set(themes or [])
+    if "mateIn1" not in themes:
+        return [recorded_move]
+    mating_moves = enumerate_legal_mating_moves(fen)
+    if recorded_move not in mating_moves:
+        raise ValueError(
+            f"Recorded mateIn1 move {recorded_move!r} is not mate in FEN {fen!r}"
+        )
+    return mating_moves
 
 
 def find_puzzles_by_rating(unique_puzzles, data, cfg):
@@ -47,6 +78,7 @@ def find_puzzles_by_rating(unique_puzzles, data, cfg):
         
         fen, move = make_pre_move(row)
         task_name = rating_to_level(row['Rating'])
+        themes = row['Themes'].split(' ')
         
         if found_counter[task_name] < cfg.N_sample_rating:
             prefix = f"You are given a chess position in FEN: {fen}.\n"
@@ -65,7 +97,8 @@ def find_puzzles_by_rating(unique_puzzles, data, cfg):
                 metadata = {
                     "puzzle_id": puzzle_id,
                     "rating": row['Rating'],
-                    "themes": row['Themes'].split(' '),
+                    "themes": themes,
+                    "acceptable_answers": acceptable_answers(fen, move, themes),
                     "rating_deviation": rating_deviation,
                     "popularity": popularity,
                     "pv_length": pv_length,
@@ -114,7 +147,7 @@ def find_puzzles_by_theme(unique_puzzles, data, cfg):
         if not intersecting_themes:
             continue
         
-        for primary_theme in intersecting_themes:
+        for primary_theme in sorted(intersecting_themes):
             if found_counter[primary_theme] < cfg.N_sample_theme:
                 prefix = f"You are given a chess position in FEN: {fen}.\n"
                 task_description = "Find the best move for the side to play.\n"
@@ -134,6 +167,7 @@ def find_puzzles_by_theme(unique_puzzles, data, cfg):
                         "rating": row['Rating'],
                         "themes": row['Themes'].split(' '),
                         "primary_theme": primary_theme,
+                        "acceptable_answers": acceptable_answers(fen, move, puzzle_themes),
                         "rating_deviation": rating_deviation,
                         "popularity": popularity,
                         "pv_length": pv_length,

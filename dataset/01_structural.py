@@ -72,50 +72,17 @@ def detect_check_in_1(board: chess.Board) -> List[str]:
 
 
 def is_pinned(board: chess.Board, piece_square: int) -> bool:
-    """Check if a piece is pinned to its king."""
+    """Return whether ``piece_square`` is absolutely pinned.
+
+    This helper is retained for audit metadata only.  In particular, a pin does
+    *not* erase the squares attacked by a piece: FIDE Law 3.1.3 explicitly
+    treats a square as attacked even when moving there would expose the
+    attacker's king.
+    """
     piece = board.piece_at(piece_square)
     if piece is None:
         return False
-
-    king_square = board.king(piece.color)
-    if king_square is None:
-        return False
-
-    # Check if piece is on same rank, file, or diagonal as king
-    attacks_between = chess.SquareSet.between(piece_square, king_square)
-    if not attacks_between:
-        # Piece not aligned with king
-        return False
-
-    # Include the piece square itself in the line
-    attacks_between.add(piece_square)
-
-    # Check if there's a sliding piece (rook, bishop, queen) attacking along this line
-    enemy_color = not piece.color
-
-    # Check for rook/queen attacks on ranks and files
-    if chess.square_rank(piece_square) == chess.square_rank(king_square) or \
-       chess.square_file(piece_square) == chess.square_file(king_square):
-        for attacker_square in board.pieces(chess.ROOK, enemy_color) | board.pieces(chess.QUEEN, enemy_color):
-            if chess.SquareSet.between(attacker_square, king_square) & attacks_between == attacks_between:
-                # Check if there are no other pieces between attacker and king
-                between_squares = chess.SquareSet.between(attacker_square, king_square)
-                between_squares.discard(piece_square)
-                if all(board.piece_at(sq) is None for sq in between_squares):
-                    return True
-
-    # Check for bishop/queen attacks on diagonals
-    if abs(chess.square_rank(piece_square) - chess.square_rank(king_square)) == \
-       abs(chess.square_file(piece_square) - chess.square_file(king_square)):
-        for attacker_square in board.pieces(chess.BISHOP, enemy_color) | board.pieces(chess.QUEEN, enemy_color):
-            if chess.SquareSet.between(attacker_square, king_square) & attacks_between == attacks_between:
-                # Check if there are no other pieces between attacker and king
-                between_squares = chess.SquareSet.between(attacker_square, king_square)
-                between_squares.discard(piece_square)
-                if all(board.piece_at(sq) is None for sq in between_squares):
-                    return True
-
-    return False
+    return board.is_pinned(piece.color, piece_square)
 
 
 def detect_capture_squares(board: chess.Board, target_square: str) -> List[str]:
@@ -125,11 +92,9 @@ def detect_capture_squares(board: chess.Board, target_square: str) -> List[str]:
     if piece is None:
         return []
 
-    # If piece is pinned, it cannot capture anything
-    if is_pinned(board, square_index):
-        return []
-
-    # Get squares this piece attacks
+    # ``Board.attacks`` follows attack geometry and therefore deliberately
+    # retains attacks by pinned pieces.  This task is about attacked occupied
+    # squares, not the legal-move set (which is evaluated separately).
     attacks = board.attacks(square_index)
     capture_squares = []
 
@@ -148,10 +113,6 @@ def detect_control_squares(board: chess.Board, target_square: str) -> List[str]:
     if piece is None:
         return []
 
-    # If piece is pinned, it cannot control any squares
-    if is_pinned(board, square_index):
-        return []
-
     attacks = board.attacks(square_index)
     control_squares = []
 
@@ -168,10 +129,6 @@ def detect_protect_squares(board: chess.Board, target_square: str) -> List[str]:
     piece = board.piece_at(square_index)
 
     if piece is None:
-        return []
-
-    # If piece is pinned, it cannot protect any squares
-    if is_pinned(board, square_index):
         return []
 
     attacks = board.attacks(square_index)
@@ -351,6 +308,13 @@ def generate_capture_squares_task(board: chess.Board, found_counter: Dict[str, i
     if not occupied_squares:
         return None
 
+    occupied_squares = [
+        sq for sq in occupied_squares
+        if detect_capture_squares(board, chess.square_name(sq))
+    ]
+    if not occupied_squares:
+        return None
+
     target_square_index = random.choice(occupied_squares)
     target_square = chess.square_name(target_square_index)
     piece = board.piece_at(target_square_index)
@@ -360,10 +324,8 @@ def generate_capture_squares_task(board: chess.Board, found_counter: Dict[str, i
     piece_name = get_piece_name(piece)
 
     prefix = f"You are given a chess position in FEN: {board.fen()}.\n"
-    # task_description = f"Find all squares that the {piece_name} on {target_square} can capture (reachable squares that have opponent pieces)."
-    # task_description += " Exclude captures if the piece is pinned to its king.\n"
-    task_description = f"Find all squares that the {piece_name} on {target_square} can capture (i.e. every square that has an opponent piece such that the {piece_name} on {target_square} could legally move to that square and capture the piece).\n"
-    task_description += f"Exclude captures if the {piece_name} on {target_square} is pinned to its king and thus cannot move.\n"
+    task_description = f"Find all opponent-occupied squares attacked by the {piece_name} on {target_square}.\n"
+    task_description += "Use the standard chess definition of attack: include an attacked square even if moving there would expose the attacking piece's own king.\n"
     suffix = "Example final answer: FORMAT_EXAMPLE_PLACEHOLDER"
 
     correct_answer = ", ".join(sorted(capture_squares))
@@ -382,6 +344,8 @@ def generate_capture_squares_task(board: chess.Board, found_counter: Dict[str, i
             "puzzle_id": puzzle_id,
             "target_square": target_square,
             "piece": piece_name,
+            "is_pinned": is_pinned(board, target_square_index),
+            "square_semantics": "attacked_enemy_occupied",
             "n_captures": len(capture_squares)
         }
     )
@@ -394,6 +358,13 @@ def generate_control_squares_task(board: chess.Board, found_counter: Dict[str, i
     if not occupied_squares:
         return None
 
+    occupied_squares = [
+        sq for sq in occupied_squares
+        if detect_control_squares(board, chess.square_name(sq))
+    ]
+    if not occupied_squares:
+        return None
+
     target_square_index = random.choice(occupied_squares)
     target_square = chess.square_name(target_square_index)
     piece = board.piece_at(target_square_index)
@@ -403,10 +374,8 @@ def generate_control_squares_task(board: chess.Board, found_counter: Dict[str, i
     piece_name = get_piece_name(piece)
 
     prefix = f"You are given a chess position in FEN: {board.fen()}.\n"
-    # task_description = f"Find all squares that the {piece_name} on {target_square} controls (reachable empty squares)."
-    # task_description += " Exclude control if the piece is pinned to its king.\n"
-    task_description = f"Find all squares that the {piece_name} on {target_square} controls (i.e. every empty square that the {piece_name} on {target_square} could legally move to, excluding squares occupied by any piece).\n"
-    task_description += f"Exclude control if the {piece_name} on {target_square} is pinned to its king and thus cannot move.\n"
+    task_description = f"Find all empty squares attacked (controlled) by the {piece_name} on {target_square}.\n"
+    task_description += "Use the standard chess definition of attack: include an attacked square even if moving there would expose the attacking piece's own king.\n"
     suffix = "Example final answer: FORMAT_EXAMPLE_PLACEHOLDER"
 
     correct_answer = ", ".join(sorted(control_squares))
@@ -425,6 +394,8 @@ def generate_control_squares_task(board: chess.Board, found_counter: Dict[str, i
             "puzzle_id": puzzle_id,
             "target_square": target_square,
             "piece": piece_name,
+            "is_pinned": is_pinned(board, target_square_index),
+            "square_semantics": "attacked_empty",
             "n_controlled": len(control_squares)
         }
     )
@@ -437,6 +408,13 @@ def generate_protect_squares_task(board: chess.Board, found_counter: Dict[str, i
     if not occupied_squares:
         return None
 
+    occupied_squares = [
+        sq for sq in occupied_squares
+        if detect_protect_squares(board, chess.square_name(sq))
+    ]
+    if not occupied_squares:
+        return None
+
     target_square_index = random.choice(occupied_squares)
     target_square = chess.square_name(target_square_index)
     piece = board.piece_at(target_square_index)
@@ -445,17 +423,9 @@ def generate_protect_squares_task(board: chess.Board, found_counter: Dict[str, i
 
     piece_name = get_piece_name(piece)
     
-    # You are given a chess position in FEN: r4r2/pb2ppkp/1p4p1/2pq4/8/1P1P4/P1PN1PPP/R2Q1RK1 w - - 0 15.
-    # CONTEXT_PLACEHOLDERFind all squares that contain pieces that the Black Queen on d5 protects (i.e. every square that contains a piece such that the Black Queen on d5 could legally recapture if an enemy piece captured it, excluding the king since it can't be captured).
-    # Exclude protection if Black Queen on d5 is pinned to its king and thus cannot move.
-    # Analyze step by step and explain your reasoning.
-    # Finish with a single line formatted EXACTLY as:
-    # FINAL ANSWER: <answer>
-    # Example final answer: FORMAT_EXAMPLE_PLACEHOLDER
-
     prefix = f"You are given a chess position in FEN: {board.fen()}.\n"
-    task_description = f"Find all squares that contain pieces that the {piece_name} on {target_square} protects (i.e. every square that contains a piece such that the {piece_name} on {target_square} could legally recapture if an enemy piece captured it, excluding the king since it can't be captured).\n"
-    task_description += f"Exclude protection if the {piece_name} on {target_square} is pinned to its king and thus cannot move.\n"
+    task_description = f"Find all friendly-occupied squares (excluding the king) attacked and therefore protected by the {piece_name} on {target_square}.\n"
+    task_description += "Use the standard chess definition of attack: include an attacked square even if moving there would expose the attacking piece's own king.\n"
     suffix = "Example final answer: FORMAT_EXAMPLE_PLACEHOLDER"
 
     correct_answer = ", ".join(sorted(protect_squares))
@@ -474,6 +444,8 @@ def generate_protect_squares_task(board: chess.Board, found_counter: Dict[str, i
             "puzzle_id": puzzle_id,
             "target_square": target_square,
             "piece": piece_name,
+            "is_pinned": is_pinned(board, target_square_index),
+            "square_semantics": "attacked_friendly_occupied_excluding_king",
             "n_protected": len(protect_squares)
         }
     )
