@@ -48,7 +48,7 @@ class ProtocolFixTests(unittest.TestCase):
             scored = score_response(task, f"FINAL ANSWER: {answer}", {}, 8192)
             self.assertTrue(scored["is_correct"])
 
-    def test_audited_motif_defects_are_repaired(self):
+    def test_motif_prompt_and_canonicalization(self):
         rows = [json.loads(line) for line in (ROOT / "benchmark" / "motifs.jsonl").read_text().splitlines()]
         by_id = {row["task_id"]: row for row in rows}
 
@@ -68,7 +68,7 @@ class ProtocolFixTests(unittest.TestCase):
         import chess
 
         generated = motif.generate_double_check_task(
-            chess.Board(double["input"]), {"double_check": 0}, "audit"
+            chess.Board(double["input"]), {"double_check": 0}, "test"
         )
         self.assertEqual(generated.correct_answer, "f2f1b, f2f1q")
 

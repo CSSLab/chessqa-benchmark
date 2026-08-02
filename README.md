@@ -6,7 +6,7 @@ The frozen benchmark and reported model outputs are kept immutable. The current 
 
 - Structural capture/control/protect labels use the standard attack relation. Pinned pieces retain attacked squares; pin status is audit metadata.
 - Every legal mate-in-one move is accepted, including for old JSONL rows that store only the Lichess move.
-- Frozen Motif prompts/labels are repaired at evaluation time for the omitted absolute-pin definition, promotion suffixes in double checks, and battery square ordering; corrected builders emit these forms directly.
+- Motif prompts and scoring apply the absolute-pin definition, retain full UCI promotion suffixes, and canonicalize battery square ordering.
 - Strict protocol accuracy, format compliance, and format-relaxed chess-content accuracy are separate fields.
 - FEN, ASCII-board, and explicit-piece-list inputs can be evaluated under otherwise matched prompts.
 - Overall reporting includes item-micro, equal-task macro, and equal-category macro scores.
