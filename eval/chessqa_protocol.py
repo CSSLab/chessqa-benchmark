@@ -1,10 +1,4 @@
-"""Representation, extraction, and scoring utilities for ChessQA.
-
-The primary benchmark protocol remains the exact ``FINAL ANSWER`` protocol.
-This module also exposes semantically equivalent board representations and a
-JSON answer protocol so representation decoding, format compliance, and chess
-content can be measured separately.
-"""
+"""Representation, prompting, extraction, and scoring utilities for ChessQA."""
 
 from __future__ import annotations
 
@@ -19,6 +13,17 @@ import chess
 
 REPRESENTATIONS = ("fen", "ascii", "piece_list")
 OUTPUT_PROTOCOLS = ("terminal", "json")
+PROMPT_STYLES = ("analysis", "direct")
+
+_POSITION_REASONING_RE = re.compile(
+    r"\s*Think deeper about this position:.*?"
+    r"How would a strong engine assess this position after calculating many moves deep\?\s*",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_STEP_BY_STEP_RE = re.compile(
+    r"\s*Analyze step by step and explain your reasoning\.\s*",
+    flags=re.IGNORECASE,
+)
 
 
 def clean_fen(value: str) -> str:
@@ -191,16 +196,22 @@ def format_task_prompt(
     representation: str = "fen",
     format_example_group: int = 1,
     output_protocol: str = "terminal",
+    prompt_style: str = "analysis",
 ) -> str:
-    """Format one task under a controlled representation/output protocol."""
+    """Format one task under controlled input, output, and prompt settings."""
     if output_protocol not in OUTPUT_PROTOCOLS:
         raise ValueError(f"Unknown output protocol {output_protocol!r}")
+    if prompt_style not in PROMPT_STYLES:
+        raise ValueError(f"Unknown prompt style {prompt_style!r}")
     question = str(task["question"])
     value = str(task.get("input", ""))
     context = piece_context(value) if add_piece_context else ""
     question = question.replace("CONTEXT_PLACEHOLDER", context)
     question = repair_legacy_task_wording(task, question)
     question = _replace_representation(question, value, representation)
+    if prompt_style == "direct":
+        question = _POSITION_REASONING_RE.sub("\n", question)
+        question = _STEP_BY_STEP_RE.sub("\n", question)
     example = _select_example(task.get("format_examples", []), format_example_group)
     question = question.replace("FORMAT_EXAMPLE_PLACEHOLDER", example)
     if output_protocol == "json":
@@ -459,6 +470,7 @@ def aggregate_scores(results: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
 
 __all__ = [
     "OUTPUT_PROTOCOLS",
+    "PROMPT_STYLES",
     "REPRESENTATIONS",
     "accepted_answers",
     "aggregate_scores",

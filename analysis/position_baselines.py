@@ -13,7 +13,7 @@ import argparse
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 import chess
 import chess.engine
@@ -102,31 +102,58 @@ def cross_validated_linear(items: List[dict], folds: int, seed: int) -> List[int
     return [snap(score) for score in predictions]
 
 
-def fixed_engine_predictions(items: List[dict], path: str, nodes: int) -> List[int]:
+def fixed_engine_predictions(
+    items: List[dict], path: str, nodes: int, threads: int, hash_mb: int
+) -> Tuple[List[int], Dict[str, Any]]:
     engine = chess.engine.SimpleEngine.popen_uci(path)
     predictions = []
     try:
+        engine.configure({"Threads": threads, "Hash": hash_mb})
+        engine_info = dict(engine.id)
         for item in items:
             info = engine.analyse(chess.Board(item["input"]), chess.engine.Limit(nodes=nodes))
             score = info["score"].pov(chess.WHITE).score(mate_score=100000)
             predictions.append(snap(float(score)))
     finally:
         engine.quit()
-    return predictions
+    return predictions, {
+        "binary": str(Path(path).resolve()),
+        "engine": engine_info,
+        "nodes_per_position": nodes,
+        "threads": threads,
+        "hash_mb": hash_mb,
+    }
 
 
 def summarize(items: List[dict], predictions: Iterable[int]) -> Dict[str, object]:
     by_type = defaultdict(list)
+    confusion = defaultdict(lambda: defaultdict(int))
     correct = []
+    disagreements = []
     for item, prediction in zip(items, predictions):
-        hit = str(prediction) == str(item["correct_answer"])
+        gold = int(item["correct_answer"])
+        hit = prediction == gold
         correct.append(hit)
         by_type[item["task_type"]].append(hit)
+        confusion[str(gold)][str(prediction)] += 1
+        if not hit:
+            disagreements.append({
+                "task_id": item["task_id"],
+                "task_type": item["task_type"],
+                "label": gold,
+                "prediction": prediction,
+            })
     return {
         "accuracy": float(np.mean(correct)),
         "correct": int(sum(correct)),
         "total": len(correct),
+        "different": len(correct) - int(sum(correct)),
         "by_task": {key: float(np.mean(values)) for key, values in sorted(by_type.items())},
+        "confusion": {
+            gold: dict(sorted(predictions.items(), key=lambda pair: int(pair[0])))
+            for gold, predictions in sorted(confusion.items(), key=lambda pair: int(pair[0]))
+        },
+        "disagreements": disagreements,
     }
 
 
@@ -135,6 +162,8 @@ def main() -> None:
     parser.add_argument("dataset", type=Path)
     parser.add_argument("--stockfish")
     parser.add_argument("--nodes", type=int, default=5000)
+    parser.add_argument("--threads", type=int, default=1)
+    parser.add_argument("--hash-mb", type=int, default=128)
     parser.add_argument("--folds", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", type=Path)
@@ -146,11 +175,22 @@ def main() -> None:
         "hand_static": [snap(static_score(chess.Board(item["input"]))) for item in items],
         "linear_piece_square_cv": cross_validated_linear(items, args.folds, args.seed),
     }
+    engine_run = None
     if args.stockfish:
-        predictions[f"stockfish_{args.nodes}_nodes"] = fixed_engine_predictions(
-            items, args.stockfish, args.nodes
+        engine_predictions, engine_run = fixed_engine_predictions(
+            items, args.stockfish, args.nodes, args.threads, args.hash_mb
         )
-    report = {name: summarize(items, values) for name, values in predictions.items()}
+        predictions[f"stockfish_{args.nodes}_nodes"] = engine_predictions
+    report = {
+        "dataset": str(args.dataset),
+        "n_items": len(items),
+        "folds": args.folds,
+        "seed": args.seed,
+        "engine_run": engine_run,
+        "baselines": {
+            name: summarize(items, values) for name, values in predictions.items()
+        },
+    }
     rendered = json.dumps(report, indent=2, sort_keys=True)
     if args.output:
         args.output.write_text(rendered + "\n", encoding="utf-8")

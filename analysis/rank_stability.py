@@ -53,12 +53,25 @@ def canonical_item_key(row: Mapping[str, Any]) -> str:
 def load(path: Path) -> Dict[str, dict]:
     with path.open(encoding="utf-8") as handle:
         rows = [json.loads(line) for line in handle if line.strip()]
-    return {canonical_item_key(row): row for row in rows}
+    loaded = {canonical_item_key(row): row for row in rows}
+    if len(loaded) != len(rows):
+        raise ValueError(f"Duplicate canonical task IDs in {path}")
+    return loaded
 
 
 def metadata(item: Mapping[str, Any]) -> dict:
-    value = item.get("metadata") or {}
+    value = item.get("metadata") or item.get("metadata_json") or {}
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = {}
     return value if isinstance(value, dict) else {}
+
+
+def fen4(value: Any) -> str:
+    fields = str(value or "").split("|", 1)[0].strip().split()
+    return " ".join(fields[:4]) if len(fields) >= 4 else ""
 
 
 def source_cluster(item: Mapping[str, Any]) -> str:
@@ -79,18 +92,44 @@ def source_cluster(item: Mapping[str, Any]) -> str:
 
 
 def metrics(rows: Sequence[Mapping[str, Any]]) -> Dict[str, float]:
-    tasks, categories = defaultdict(list), defaultdict(list)
+    tasks, categories, sources = defaultdict(list), defaultdict(list), defaultdict(list)
     values = []
     for row in rows:
         value = bool((row.get("inference") or {}).get("is_correct", row.get("is_correct", False)))
         values.append(value)
         tasks[canonical_task_type(row.get("task_type"))].append(value)
         categories[canonical_category(row.get("task_category"))].append(value)
+        sources[source_cluster(row)].append(value)
     return {
         "item_micro": mean(values),
         "task_macro": mean(mean(group) for group in tasks.values()),
         "category_macro": mean(mean(group) for group in categories.values()),
+        "source_balanced": mean(mean(group) for group in sources.values()),
     }
+
+
+def source_disjoint_keys(rows: Mapping[str, Mapping[str, Any]]) -> set[str]:
+    """Keep items whose FEN and PuzzleId occur in only one category."""
+    fen_categories: Dict[str, set[str]] = defaultdict(set)
+    puzzle_categories: Dict[str, set[str]] = defaultdict(set)
+    for row in rows.values():
+        category = canonical_category(row.get("task_category"))
+        position = fen4(row.get("input"))
+        puzzle_id = str(metadata(row).get("puzzle_id", ""))
+        if position:
+            fen_categories[position].add(category)
+        if puzzle_id:
+            puzzle_categories[puzzle_id].add(category)
+
+    kept = set()
+    for key, row in rows.items():
+        position = fen4(row.get("input"))
+        puzzle_id = str(metadata(row).get("puzzle_id", ""))
+        fen_ok = not position or len(fen_categories[position]) == 1
+        puzzle_ok = not puzzle_id or len(puzzle_categories[puzzle_id]) == 1
+        if fen_ok and puzzle_ok:
+            kept.add(key)
+    return kept
 
 
 def ranks(models: Sequence[str], values: Mapping[str, float]) -> Dict[str, int]:
@@ -120,20 +159,37 @@ def main() -> None:
     loaded = {model: {key: rows[key] for key in common} for model, rows in loaded.items()}
     models = sorted(loaded)
     point = {model: metrics(list(rows.values())) for model, rows in loaded.items()}
+    reference = next(iter(loaded.values()))
+    disjoint_keys = source_disjoint_keys(reference)
+    for model, rows in loaded.items():
+        point[model]["source_disjoint_item_micro"] = metrics(
+            [rows[key] for key in disjoint_keys]
+        )["item_micro"]
 
     point_ranks = {}
-    for metric_name in ("item_micro", "task_macro", "category_macro"):
+    for metric_name in (
+        "item_micro",
+        "task_macro",
+        "category_macro",
+        "source_balanced",
+        "source_disjoint_item_micro",
+    ):
         values = {model: point[model][metric_name] for model in models}
         point_ranks[metric_name] = ranks(models, values)
     rank_stability = {}
-    for left, right in (("item_micro", "task_macro"), ("item_micro", "category_macro"), ("task_macro", "category_macro")):
+    for left, right in (
+        ("item_micro", "task_macro"),
+        ("item_micro", "category_macro"),
+        ("task_macro", "category_macro"),
+        ("item_micro", "source_balanced"),
+        ("item_micro", "source_disjoint_item_micro"),
+    ):
         rho = spearman_rank_correlation(
             [point_ranks[left][model] for model in models],
             [point_ranks[right][model] for model in models],
         )
         rank_stability[f"{left}--{right}"] = float(rho)
 
-    reference = next(iter(loaded.values()))
     by_cluster = defaultdict(list)
     for task_id, row in reference.items():
         by_cluster[source_cluster(row)].append(task_id)
@@ -145,8 +201,19 @@ def main() -> None:
         sampled_ids = [task_id for cluster in sampled for task_id in by_cluster[cluster]]
         for model in models:
             result = metrics([loaded[model][task_id] for task_id in sampled_ids])
-            for metric_name, value in result.items():
+            for metric_name in ("item_micro", "task_macro", "category_macro"):
+                value = result[metric_name]
                 draws[model][metric_name].append(value)
+            cluster_values = [
+                mean(
+                    bool((loaded[model][task_id].get("inference") or {}).get(
+                        "is_correct", loaded[model][task_id].get("is_correct", False)
+                    ))
+                    for task_id in by_cluster[cluster]
+                )
+                for cluster in sampled
+            ]
+            draws[model]["source_balanced"].append(mean(cluster_values))
 
     intervals = {}
     for model in models:
@@ -159,6 +226,16 @@ def main() -> None:
         "n_models": len(models),
         "n_shared_items": len(common),
         "n_source_clusters": len(cluster_ids),
+        "source_disjoint_items": len(disjoint_keys),
+        "source_disjoint_items_by_category": {
+            category: sum(
+                canonical_category(reference[key].get("task_category")) == category
+                for key in disjoint_keys
+            )
+            for category in sorted(
+                {canonical_category(row.get("task_category")) for row in reference.values()}
+            )
+        },
         "point_estimates": point,
         "ranks": point_ranks,
         "rank_spearman": rank_stability,

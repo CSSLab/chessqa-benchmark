@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 from chessqa_protocol import (
     OUTPUT_PROTOCOLS,
+    PROMPT_STYLES,
     REPRESENTATIONS,
     aggregate_scores,
     extract_protocol_answer,
@@ -31,7 +32,10 @@ def load_tasks(
     tasks = []
 
     # Find all JSONL files in the dataset root
-    jsonl_files = list(dataset_root.glob("*.jsonl"))
+    jsonl_files = [
+        path for path in dataset_root.glob("*.jsonl")
+        if not path.stem.endswith("_manifest")
+    ]
     if not jsonl_files:
         raise ValueError(f"No JSONL files found in {dataset_root}")
 
@@ -93,6 +97,7 @@ def format_prompt(
     format_example_group: int = 1,
     representation: str = "fen",
     output_protocol: str = "terminal",
+    prompt_style: str = "analysis",
 ) -> str:
     """Format a task under an explicit board and output representation."""
     return format_task_prompt(
@@ -101,6 +106,7 @@ def format_prompt(
         representation=representation,
         format_example_group=format_example_group,
         output_protocol=output_protocol,
+        prompt_style=prompt_style,
     )
 
 
@@ -167,7 +173,7 @@ def process_single_task(args_tuple):
     """Process a single task - for multiprocessing."""
     (task, model, add_context, format_example_group, api_key, max_retries,
      timeout, max_tokens, enable_thinking, representation, output_protocol,
-     temperature, reasoning_effort) = args_tuple
+     temperature, reasoning_effort, prompt_style) = args_tuple
 
     # Create inferencer instance for this process
     # Filename suffix is handled by the parent inferencer when saving; child only calls the API
@@ -175,10 +181,14 @@ def process_single_task(args_tuple):
         model, add_context, max_retries, timeout, max_tokens, enable_thinking,
         representation=representation, output_protocol=output_protocol,
         temperature=temperature, reasoning_effort=reasoning_effort,
+        prompt_style=prompt_style,
         api_key=api_key,
     )
 
-    prompt = format_prompt(task, add_context, format_example_group, representation, output_protocol)
+    prompt = format_prompt(
+        task, add_context, format_example_group, representation, output_protocol,
+        prompt_style,
+    )
     response, thinking_content, usage = inferencer.call_model(prompt)
     return _build_scored_result(
         task, prompt, response, thinking_content, usage, max_tokens, output_protocol
@@ -190,6 +200,7 @@ def _build_variant_suffix(
     format_example_group: int,
     representation: str = "fen",
     output_protocol: str = "terminal",
+    prompt_style: str = "analysis",
     run_id: str = "",
 ) -> str:
     """Return a short suffix for filenames to distinguish experiment variants."""
@@ -202,6 +213,8 @@ def _build_variant_suffix(
         parts.append(representation.replace("_", "-"))
     if output_protocol != "terminal":
         parts.append(output_protocol)
+    if prompt_style != "analysis":
+        parts.append(prompt_style)
     if run_id:
         parts.append(f"run-{re.sub(r'[^A-Za-z0-9_.-]+', '-', run_id)}")
     return ("-" + "-".join(parts)) if parts else ""
@@ -212,6 +225,7 @@ class OpenrouterInferencer:
                  enable_thinking: bool = False, filename_suffix: str = "",
                  representation: str = "fen", output_protocol: str = "terminal",
                  temperature: float = 1.0, reasoning_effort: str = "medium",
+                 prompt_style: str = "analysis",
                  api_key: Optional[str] = None):
         self.model = model
         self.add_context = add_context
@@ -223,6 +237,7 @@ class OpenrouterInferencer:
         self.output_protocol = output_protocol
         self.temperature = temperature
         self.reasoning_effort = reasoning_effort
+        self.prompt_style = prompt_style
         # Additional filename suffix to differentiate experiment variants in outputs
         self.filename_suffix = filename_suffix
         keys_path = Path(__file__).parent.parent.parent / "keys" / "api_keys.json"
@@ -334,7 +349,7 @@ class OpenrouterInferencer:
             for i, task in enumerate(tqdm(tasks, desc="Processing tasks")):
                 prompt = format_prompt(
                     task, self.add_context, format_example_group,
-                    self.representation, self.output_protocol,
+                    self.representation, self.output_protocol, self.prompt_style,
                 )
                 response, thinking_content, usage = self.call_model(prompt)
                 result = _build_scored_result(
@@ -365,7 +380,7 @@ class OpenrouterInferencer:
             args_list = [(task, self.model, self.add_context, format_example_group, self.api_key,
                          self.max_retries, self.timeout, self.max_tokens, self.enable_thinking,
                          self.representation, self.output_protocol, self.temperature,
-                         self.reasoning_effort) for task in tasks]
+                         self.reasoning_effort, self.prompt_style) for task in tasks]
 
             with Pool(num_workers) as pool:
                 # Use imap for progress tracking
@@ -555,7 +570,7 @@ def main():
             model_safe_name += "-thinking"
         model_safe_name += _build_variant_suffix(
             args.add_context, args.use_format_example_group, args.representation,
-            args.output_protocol, args.run_id,
+            args.output_protocol, args.prompt_style, args.run_id,
         )
         results_file = args.output_dir / f"{model_safe_name}.jsonl"
 
@@ -632,7 +647,7 @@ def main():
                 model_safe_name += "-thinking"
             model_safe_name += _build_variant_suffix(
                 args.add_context, args.use_format_example_group, args.representation,
-                args.output_protocol, args.run_id,
+                args.output_protocol, args.prompt_style, args.run_id,
             )
             results_file = args.output_dir / f"{model_safe_name}.jsonl"
             existing_results = load_existing_results(results_file)
@@ -646,7 +661,7 @@ def main():
             # Build a filename suffix based on variant flags so this run doesn't overwrite others
             variant_suffix = _build_variant_suffix(
                 args.add_context, args.use_format_example_group, args.representation,
-                args.output_protocol, args.run_id,
+                args.output_protocol, args.prompt_style, args.run_id,
             )
             inferencer = OpenrouterInferencer(
                 args.model,
@@ -660,6 +675,7 @@ def main():
                 output_protocol=args.output_protocol,
                 temperature=args.temperature,
                 reasoning_effort=args.reasoning_effort,
+                prompt_style=args.prompt_style,
             )
 
             start_time = time.time()
@@ -756,7 +772,7 @@ def main():
         model_safe_name += "-thinking"
     model_safe_name += _build_variant_suffix(
         args.add_context, args.use_format_example_group, args.representation,
-        args.output_protocol, args.run_id,
+        args.output_protocol, args.prompt_style, args.run_id,
     )
     results_file = args.output_dir / f"{model_safe_name}.jsonl"
     stats_file = args.output_dir / f"{model_safe_name}_stats.json"
@@ -803,6 +819,7 @@ def main():
                 'enable_thinking': args.enable_thinking,
                 'representation': args.representation,
                 'output_protocol': args.output_protocol,
+                'prompt_style': args.prompt_style,
                 'temperature': args.temperature,
                 'reasoning_effort': args.reasoning_effort,
                 'max_tokens': args.max_tokens,
@@ -872,25 +889,8 @@ def parse_arguments():
 
     parser.add_argument('--dataset-root', type=Path, default=default_dataset_root,
                        help='Root directory containing JSONL task files')
-    # parser.add_argument('--model', type=str, required=True,
-    #                    help='OpenRouter model ID, e.g., google/gemini-2.5-flash')
-    # parser.add_argument('--model', type=str, default='mistralai/mistral-medium-3.1')
-    # parser.add_argument('--model', type=str, default='google/gemini-2.5-pro')
-    # parser.add_argument('--model', type=str, default='google/gemini-2.5-flash')
-    # parser.add_argument('--model', type=str, default='anthropic/claude-3.5-haiku')
-    # parser.add_argument('--model', type=str, default='anthropic/claude-haiku-4.5')
-    parser.add_argument('--model', type=str, default='anthropic/claude-sonnet-4.5')
-    # parser.add_argument('--model', type=str, default='anthropic/claude-sonnet-4')
-    # parser.add_argument('--model', type=str, default='deepseek/deepseek-chat-v3.1')
-    # parser.add_argument('--model', type=str, default='deepseek/deepseek-r1-0528')
-    # parser.add_argument('--model', type=str, default='openai/gpt-5-chat')
-    # parser.add_argument('--model', type=str, default='openai/gpt-5')
-    # parser.add_argument('--model', type=str, default='qwen/qwen3-next-80b-a3b-instruct')
-    # parser.add_argument('--model', type=str, default='qwen/qwen3-next-80b-a3b-thinking')
-    # parser.add_argument('--model', type=str, default='qwen/qwen3-max')
-    # parser.add_argument('--model', type=str, default='meta-llama/llama-4-maverick')
-    # parser.add_argument('--model', type=str, default='meta-llama/llama-4-scout')
-    # parser.add_argument('--model', type=str, default='google/gemma-3-27b-it')
+    parser.add_argument('--model', type=str, required=True,
+                       help='OpenRouter model ID, e.g., google/gemini-2.5-flash')
     parser.add_argument('--output-dir', type=Path, default=default_output_dir,
                        help='Directory to save results')
     parser.add_argument('--max-tasks', type=int, default=None)
@@ -901,6 +901,8 @@ def parse_arguments():
                        help='Board representation: canonical FEN, ASCII, or explicit piece list')
     parser.add_argument('--output-protocol', choices=OUTPUT_PROTOCOLS, default='terminal',
                        help='Requested answer wrapper; content is scored separately in either mode')
+    parser.add_argument('--prompt-style', choices=PROMPT_STYLES, default='analysis',
+                       help='Use the benchmark analysis request or a direct-answer prompt')
     parser.add_argument('--workers', type=int, default=8,
                        help='Number of parallel workers (default: 8, set to 1 for sequential)')
     parser.add_argument('--save-interval', type=int, default=10,

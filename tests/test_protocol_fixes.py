@@ -121,6 +121,23 @@ class ProtocolFixTests(unittest.TestCase):
         self.assertIn("a b c d e f g h", prompt)
         self.assertIn("White to move", prompt)
 
+    def test_direct_prompt_removes_analysis_request(self):
+        task = {
+            "question": (
+                "Estimate the position. Think deeper about this position: Don't just evaluate "
+                "the current board state. Consider likely moves. How would a strong engine assess "
+                "this position after calculating many moves deep?Analyze step by step and explain "
+                "your reasoning.\nAnalyze step by step and explain your reasoning.\n"
+                "Finish with a single line formatted EXACTLY as:\n"
+                "FINAL ANSWER: <answer>"
+            ),
+            "input": "8/8/8/8/8/8/4K3/6k1 w - - 0 1",
+        }
+        prompt = format_task_prompt(task, prompt_style="direct")
+        self.assertNotIn("Analyze step by step", prompt)
+        self.assertNotIn("Think deeper about this position", prompt)
+        self.assertIn("FINAL ANSWER", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

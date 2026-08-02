@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit ChessQA source overlap and frozen-label risk cases."""
+"""Audit ChessQA source overlap and label cases."""
 
 from __future__ import annotations
 
@@ -39,12 +39,17 @@ def fen4(value: str) -> str:
     return " ".join((value or "").split("|", 1)[0].strip().split()[:4])
 
 
+def item_fen(item: Mapping[str, Any]) -> str:
+    meta = metadata(item)
+    return fen4(str(item.get("input") or item.get("fen_before") or meta.get("fen_before") or ""))
+
+
 def semantic_triple(item: Mapping[str, Any]) -> tuple[str, str, str]:
     meta = metadata(item)
     return (
-        fen4(str(meta.get("fen_before") or item.get("input", ""))),
-        str(meta.get("move_uci", "")),
-        str(meta.get("correct_text", "")),
+        item_fen(item),
+        str(item.get("move_uci") or meta.get("move_uci", "")),
+        str(item.get("source_comment_sha256") or meta.get("correct_text", "")),
     )
 
 
@@ -65,7 +70,7 @@ def build_summary(datasets: Mapping[str, Sequence[dict]]) -> dict:
     fen_sets = {}
     puzzle_sets = {}
     for name, items in datasets.items():
-        fens = {fen4(str(item.get("input", ""))) for item in items}
+        fens = {item_fen(item) for item in items}
         puzzle_ids = {
             str(metadata(item).get("puzzle_id"))
             for item in items
@@ -92,7 +97,7 @@ def build_summary(datasets: Mapping[str, Sequence[dict]]) -> dict:
                 "puzzle_id_overlap": puzzle_overlap,
             })
 
-    semantic = datasets.get("semantic", [])
+    semantic = datasets.get("semantic", datasets.get("semantic_manifest", []))
     triples = {semantic_triple(item) for item in semantic}
     variants = defaultdict(set)
     for item in semantic:
@@ -121,12 +126,32 @@ def build_summary(datasets: Mapping[str, Sequence[dict]]) -> dict:
             if piece.piece_type in (chess.BISHOP, chess.ROOK, chess.QUEEN):
                 pinned[item["task_type"]]["pinned_sliders"] += 1
 
-    all_fens = Counter(fen4(str(item.get("input", ""))) for _, item in rows)
+    all_fens = Counter(item_fen(item) for _, item in rows)
     all_puzzles = Counter(
         str(metadata(item).get("puzzle_id"))
         for _, item in rows
         if metadata(item).get("puzzle_id")
     )
+    fen_categories = defaultdict(set)
+    puzzle_categories = defaultdict(set)
+    for name, item in rows:
+        category = name.removesuffix("_manifest")
+        position = item_fen(item)
+        puzzle_id = str(metadata(item).get("puzzle_id", ""))
+        if position:
+            fen_categories[position].add(category)
+        if puzzle_id:
+            puzzle_categories[puzzle_id].add(category)
+    source_disjoint = Counter()
+    for name, item in rows:
+        category = name.removesuffix("_manifest")
+        position = item_fen(item)
+        puzzle_id = str(metadata(item).get("puzzle_id", ""))
+        if (
+            (not position or len(fen_categories[position]) == 1)
+            and (not puzzle_id or len(puzzle_categories[puzzle_id]) == 1)
+        ):
+            source_disjoint[category] += 1
     task_groups = defaultdict(list)
     for _, item in rows:
         task_groups[str(item.get("task_type", "unknown"))].append(item)
@@ -139,7 +164,7 @@ def build_summary(datasets: Mapping[str, Sequence[dict]]) -> dict:
         ]
         by_task[task_type] = {
             "items": len(items),
-            "unique_fen4": len({fen4(str(item.get("input", ""))) for item in items}),
+            "unique_fen4": len({item_fen(item) for item in items}),
             "puzzle_ids": len(puzzle_ids),
             "unique_puzzle_ids": len(set(puzzle_ids)),
         }
@@ -150,6 +175,10 @@ def build_summary(datasets: Mapping[str, Sequence[dict]]) -> dict:
         "fen4_multiplicity": dict(sorted(Counter(all_fens.values()).items())),
         "unique_puzzle_ids": len(all_puzzles),
         "puzzle_id_multiplicity": dict(sorted(Counter(all_puzzles.values()).items())),
+        "source_disjoint_slice": {
+            "items": sum(source_disjoint.values()),
+            "by_category": dict(sorted(source_disjoint.items())),
+        },
         "by_file": by_file,
         "by_task": by_task,
         "pairwise_overlap": pairwise,
