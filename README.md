@@ -2,7 +2,7 @@
 
 ChessQA is a FEN-based, text-only chess QA benchmark with 50 tasks and 3,500 items across Structural (1,100), Motifs (600), Short Tactics (900), Position Judgment (500), and Semantic (400). The categories are complementary diagnostic views, not a difficulty hierarchy.
 
-The redistributable package contains 3,100 runnable items and a 400-row text-free Semantic manifest. Authorized source users can regenerate the Semantic prompts with the included pipeline.
+All 3,500 items are included and can be evaluated with the same runner.
 
 The evaluation code provides:
 
@@ -18,7 +18,7 @@ The evaluation code provides:
 
 ## Repository layout
 
-- `benchmark/`: four redistributable task files and the text-free Semantic manifest
+- `benchmark/`: the complete 3,500-item benchmark in five category files
 - `dataset/`: dataset builders
 - `eval/`: OpenRouter runner and shared protocol/scoring code
 - `analysis/`: overlap/label audits, rank stability, Semantic controls, and Position Judgment baselines
@@ -93,7 +93,7 @@ The analysis clusters shared PuzzleIds, Semantic base examples, Position Judgmen
 ## Semantic shortcut controls
 
 ```bash
-python analysis/semantic_controls.py /authorized/path/semantic.jsonl semantic_controls
+python analysis/semantic_controls.py benchmark/semantic.jsonl semantic_controls
 ```
 
 This generates comments-only, move-only, FEN-only, shuffled-FEN, and shuffled-move views without changing options or labels.
@@ -133,4 +133,4 @@ Builders live in `dataset/01_structural.py` through `dataset/05_semantic.py`. So
 
 ## Licensing and provenance
 
-The repository's MIT license covers code. Lichess-derived artifacts retain their source licenses and provenance. `benchmark/semantic_manifest.jsonl` contains state--move records, identifiers, labels, and hashes, but no ChessBase-derived comments. Authorized source users can regenerate Semantic prompts with the construction pipeline.
+The repository's MIT license covers code. The benchmark release includes all 3,500 evaluation items. Lichess-derived items retain their source provenance, and the Semantic comments come from a purchased copy of ChessBase~17. Benchmark data retains the terms associated with its source material.
