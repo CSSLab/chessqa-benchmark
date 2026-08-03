@@ -28,7 +28,7 @@ def load_motif_module():
     return module
 
 
-class ProtocolFixTests(unittest.TestCase):
+class ProtocolTests(unittest.TestCase):
     def test_pinned_rook_retains_attacks(self):
         structural = load_structural_module()
         import chess
@@ -77,20 +77,17 @@ class ProtocolFixTests(unittest.TestCase):
         self.assertIn("Piece arrangement", context)
         self.assertNotIn("Legal moves", context)
 
-    def test_frozen_pinned_prompt_is_repaired_at_render_time(self):
-        import chess
-
+    def test_structural_attack_prompts_state_standard_semantics(self):
         rows = [json.loads(line) for line in (ROOT / "benchmark" / "structural.jsonl").read_text().splitlines()]
-        task = next(
+        tasks = [
             row for row in rows
             if row["task_type"].endswith(("capture_squares", "control_squares", "protect_squares"))
-            and (lambda board, square: board.is_pinned(board.color_at(square), square))(
-                chess.Board(row["input"]), chess.parse_square(row["metadata"]["target_square"])
-            )
-        )
-        prompt = format_task_prompt(task)
-        self.assertIn("retain attacks by a pinned piece", prompt)
-        self.assertNotIn("Exclude", prompt)
+        ]
+        self.assertEqual(len(tasks), 300)
+        for task in tasks:
+            prompt = format_task_prompt(task)
+            self.assertIn("Use the standard chess definition of attack", prompt)
+            self.assertNotIn("Exclude", prompt)
 
     def test_content_and_format_are_separate(self):
         task = {

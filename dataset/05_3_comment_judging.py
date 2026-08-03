@@ -14,7 +14,7 @@ Signals to KEEP (non-exhaustive):
 Signals to DROP:
 - Generic aphorisms/quotes or meta commentary with no tie to the current move/position
 - Player biography/psychology, event logistics, audience, stream, etc.
-- Comments referencing unrelated games or people (should have been removed earlier)
+- Comments referencing unrelated games or people
 
 Heuristic pre-filter: Before calling the LLM, quickly DROP comments that clearly lack any chess-specific signal
 (no piece/square notation, too short, obvious generic phrases). You can disable this via --no-heuristics.

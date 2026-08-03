@@ -7,7 +7,7 @@ All 3,500 items are included and can be evaluated with the same runner.
 The evaluation code provides:
 
 - Structural capture/control/protect labels use the standard attack relation. Pinned pieces retain attacked squares; pin status is audit metadata.
-- Every legal mate-in-one move is accepted, including for old JSONL rows that store only the Lichess move.
+- Every legal mate-in-one move is accepted by enumerating mating moves from the supplied position.
 - Motif prompts and scoring apply the absolute-pin definition, retain full UCI promotion suffixes, and canonicalize battery square ordering.
 - Accuracy, Protocol compliance, and Content accuracy as separate fields.
 - FEN, ASCII-board, and explicit-piece-list inputs can be evaluated under otherwise matched prompts.
@@ -22,7 +22,7 @@ The evaluation code provides:
 - `dataset/`: dataset builders
 - `eval/`: OpenRouter runner and shared protocol/scoring code
 - `analysis/`: overlap/label audits, rank stability, Semantic controls, and Position Judgment baselines
-- `tests/`: regression tests for the label and protocol fixes
+- `tests/`: scoring, prompt, and dataset tests
 
 ## Install
 

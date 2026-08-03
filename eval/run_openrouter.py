@@ -111,7 +111,7 @@ def format_prompt(
 
 
 def extract_answer(response: str) -> Tuple[str, bool]:
-    """Backward-compatible strict terminal-protocol extractor."""
+    """Extract an answer under the strict terminal-line protocol."""
     return extract_protocol_answer(response, "terminal")
 
 

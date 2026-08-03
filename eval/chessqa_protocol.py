@@ -92,11 +92,7 @@ def ascii_board(value: str) -> str:
 
 
 def piece_context(value: str) -> str:
-    """Context used by the historical FEN+Pieces ablation.
-
-    Deliberately excludes legal moves; including them would leak answers for
-    several Structural tasks and would not be a piece-arrangement ablation.
-    """
+    """Render an explicit piece arrangement without legal-move hints."""
     try:
         return f"Piece arrangement: {piece_list(value, include_state=False)}\n\n"
     except ValueError:
@@ -137,58 +133,6 @@ def _select_example(examples: Any, one_based_index: int) -> str:
     return str(examples[index] if index < len(examples) else examples[0])
 
 
-def repair_legacy_task_wording(task: Mapping[str, Any], question: str) -> str:
-    """Repair frozen Structural prompts whose text contradicted their gold labels.
-
-    The frozen answers already use ``Board.attacks``.  Older prompt templates,
-    however, described legal destinations and instructed models to erase every
-    attack by a pinned piece.  Rewriting those two lines at prompt-render time
-    keeps the immutable item/result files intact while making the interface
-    match the standard attack semantics used by the corrected generator.
-    """
-    task_type = str(task.get("task_type", ""))
-    pin_marker = "For each pin, provide the key squares"
-    if (
-        task_type == "motifs_pin"
-        and "absolute pin" not in question.lower()
-        and pin_marker in question
-    ):
-        definition = (
-            "Identify all absolute pins in this position. An absolute pin occurs "
-            "when a piece cannot move because it would expose its own king to check. "
-        )
-        question = question.replace(pin_marker, definition + pin_marker, 1)
-    kind = next(
-        (name for name in ("capture_squares", "control_squares", "protect_squares") if task_type.endswith(name)),
-        None,
-    )
-    if kind is None:
-        return question
-
-    meta = _metadata(task)
-    piece = str(meta.get("piece", "specified piece"))
-    square = str(meta.get("target_square", "the queried square"))
-    descriptions = {
-        "capture_squares": f"Find all enemy-occupied squares attacked by the {piece} on {square}.",
-        "control_squares": f"Find all empty squares attacked (controlled) by the {piece} on {square}.",
-        "protect_squares": f"Find all friendly-occupied squares (excluding the king) attacked and therefore protected by the {piece} on {square}.",
-    }
-    replacement = descriptions[kind]
-    lines = question.splitlines()
-    rendered: List[str] = []
-    replaced = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("Exclude ") and "pinned" in stripped:
-            continue
-        if not replaced and stripped.startswith("Find all squares that the"):
-            rendered.extend((replacement, "Use the standard chess attack relation: retain attacks by a pinned piece."))
-            replaced = True
-        else:
-            rendered.append(line)
-    return "\n".join(rendered)
-
-
 def format_task_prompt(
     task: Mapping[str, Any],
     *,
@@ -207,7 +151,6 @@ def format_task_prompt(
     value = str(task.get("input", ""))
     context = piece_context(value) if add_piece_context else ""
     question = question.replace("CONTEXT_PLACEHOLDER", context)
-    question = repair_legacy_task_wording(task, question)
     question = _replace_representation(question, value, representation)
     if prompt_style == "direct":
         question = _POSITION_REASONING_RE.sub("\n", question)
@@ -493,6 +436,5 @@ __all__ = [
     "legal_double_check_moves",
     "piece_context",
     "piece_list",
-    "repair_legacy_task_wording",
     "score_response",
 ]

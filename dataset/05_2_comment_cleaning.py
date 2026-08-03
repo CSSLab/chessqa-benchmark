@@ -20,7 +20,7 @@ Output format:
 - Keeps all original fields.
 - Adds "original_comment" (the source text) and "cleaned_comment" (the LLM result).
 - Replaces "comment" field with the cleaned text for downstream usage.
- - Additionally normalizes legacy chess figurine glyphs (e.g., →Q, →R, →B, →N, →K), strips PGN/ChessBase tags like [%csl Rc4]/[%cal ...],
+ - Additionally normalizes ChessBase private-use chess figurine glyphs (e.g., →Q, →R, →B, →N, →K), strips PGN/ChessBase tags like [%csl Rc4]/[%cal ...],
    removes numeric annotation glyphs like $1, and prunes stray Private-Use glyphs and zero-width chars.
 
 Usage example:
