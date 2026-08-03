@@ -71,6 +71,8 @@ Each result contains:
 - `content_correct`: Content accuracy
 - `accepted_answers`: all accepted single answers, including all legal mate-in-one moves
 
+Resulting FEN answers are trimmed and compared case-sensitively because letter case encodes piece color. Other single-answer tasks retain case normalization.
+
 Stats files include item-micro, task-macro, category-macro, Protocol compliance, and Content accuracy. `--eval-only` rescores the selected result file.
 
 ## Audit benchmark structure

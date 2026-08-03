@@ -347,6 +347,15 @@ def _expected_multi_items(task: Mapping[str, Any]) -> set[str]:
     }
 
 
+def _normalize_single_answer(task: Mapping[str, Any], answer: str) -> str:
+    """Normalize a single answer without discarding semantic FEN case."""
+    rendered = answer.strip()
+    task_type = str(task.get("task_type", ""))
+    if task_type.startswith("structural_state_tracking"):
+        return rendered
+    return rendered.lower()
+
+
 def accepted_answers(task: Mapping[str, Any]) -> List[str]:
     """Return accepted answers, expanding all mate-in-one solutions."""
     if str(task.get("answer_type", "single")) != "single":
@@ -364,12 +373,12 @@ def accepted_answers(task: Mapping[str, Any]) -> List[str]:
             answers.extend(legal_mating_moves(str(task.get("input", ""))))
         except ValueError:
             pass
-    return sorted({answer.strip().lower() for answer in answers if answer.strip()})
+    return sorted({_normalize_single_answer(task, answer) for answer in answers if answer.strip()})
 
 
 def compare_answer(task: Mapping[str, Any], extracted: str) -> Tuple[bool, str]:
     answer_type = str(task.get("answer_type", "single"))
-    normalized = extracted.strip().lower()
+    normalized = _normalize_single_answer(task, extracted)
     if answer_type == "single":
         return (normalized in accepted_answers(task), "wrong_answer")
 

@@ -112,6 +112,17 @@ class ProtocolFixTests(unittest.TestCase):
         self.assertFalse(extra_json["format_compliant"])
         self.assertTrue(extra_json["content_correct"])
 
+    def test_state_tracking_fen_preserves_piece_case(self):
+        task = {
+            "task_type": "structural_state_tracking_short",
+            "correct_answer": "8/8/8/8/8/8/4K3/6k1 w - - 0 1",
+            "answer_type": "single",
+        }
+        exact = "FINAL ANSWER: 8/8/8/8/8/8/4K3/6k1 w - - 0 1"
+        wrong_colors = "FINAL ANSWER: 8/8/8/8/8/8/4k3/6K1 w - - 0 1"
+        self.assertTrue(score_response(task, exact, {}, 8192)["is_correct"])
+        self.assertFalse(score_response(task, wrong_colors, {}, 8192)["is_correct"])
+
     def test_ascii_representation_preserves_state(self):
         task = {
             "question": "You are given a chess position in FEN: 8/8/8/8/8/8/4K3/6k1 w - - 0 1",
