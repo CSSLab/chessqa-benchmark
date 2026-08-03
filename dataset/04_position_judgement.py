@@ -24,6 +24,14 @@ EVAL_CATEGORIES = {
     "losing": {"min": -450, "max": -350, "name": "losing"}
 }
 
+OPTION_CATEGORIES = {
+    "-400": "losing",
+    "-200": "disadvantage",
+    "0": "neutral",
+    "200": "advantage",
+    "400": "winning",
+}
+
 
 def _get_position_hash(fen: str) -> str:
     position_part = " ".join(fen.split()[:4])
@@ -77,7 +85,7 @@ def _parse_evaluation_line(line: str) -> Optional[Dict[str, Any]]:
             'knodes': knodes,
             'best_line': line_moves,
             'position_id': position_id,
-            'label_provenance': 'lichess_evaluations_heterogeneous_stockfish',
+            'selection_provenance': 'lichess_evaluations',
         }
 
     except (ValueError, KeyError):
@@ -134,12 +142,9 @@ def _load_evaluations(data_path: str, max_evaluations: Optional[int] = None) -> 
     return evaluations
 
 
-def _relabel_with_fixed_engine(evaluations: List[Dict[str, Any]], cfg) -> List[Dict[str, Any]]:
-    """Optionally replace Lichess labels with a pinned local Stockfish run."""
-    if not cfg.stockfish_path:
-        return evaluations
-
-    relabeled = []
+def _evaluate_with_fixed_engine(evaluations: List[Dict[str, Any]], cfg) -> List[Dict[str, Any]]:
+    """Produce reference labels with one declared Stockfish configuration."""
+    fixed = []
     engine = chess.engine.SimpleEngine.popen_uci(cfg.stockfish_path)
     try:
         options = {}
@@ -150,30 +155,36 @@ def _relabel_with_fixed_engine(evaluations: List[Dict[str, Any]], cfg) -> List[D
         if options:
             engine.configure(options)
         engine_name = engine.id.get('name', 'Stockfish')
+        with open(cfg.stockfish_path, 'rb') as engine_binary:
+            engine_binary_sha256 = hashlib.sha256(engine_binary.read()).hexdigest()
 
-        for evaluation in tqdm.tqdm(evaluations, desc="Fixed-engine relabeling"):
+        for evaluation in tqdm.tqdm(evaluations, desc="Fixed-engine evaluation"):
             board = chess.Board(evaluation['fen'])
             info = engine.analyse(board, chess.engine.Limit(nodes=cfg.stockfish_nodes))
             score = info['score'].pov(chess.WHITE)
-            centipawns = score.score()
+            centipawns = score.score(mate_score=100000)
             if centipawns is None:
                 continue
             updated = dict(evaluation)
             updated.update({
                 'best_evaluation': int(centipawns),
+                'mate_in': score.mate(),
                 'depth': info.get('depth'),
+                'seldepth': info.get('seldepth'),
+                'nodes': info.get('nodes'),
                 'knodes': (info.get('nodes') or 0) // 1000,
                 'best_line': ' '.join(move.uci() for move in info.get('pv', [])),
-                'label_provenance': 'fixed_stockfish',
+                'label_provenance': 'stockfish_fixed_nodes',
                 'engine_name': engine_name,
+                'engine_binary_sha256': engine_binary_sha256,
                 'engine_nodes': cfg.stockfish_nodes,
                 'engine_threads': cfg.stockfish_threads,
                 'engine_hash_mb': cfg.stockfish_hash_mb,
             })
-            relabeled.append(updated)
+            fixed.append(updated)
     finally:
         engine.quit()
-    return relabeled
+    return fixed
 
 def generate_centipawn_eval_task(evaluation: Dict[str, Any], category: str, found_counter: Dict[str, int]) -> ChessQuestionAnsweringTask:
     task_id = f"position_judgment_{category}_{found_counter[category]:04d}"
@@ -201,12 +212,19 @@ def generate_centipawn_eval_task(evaluation: Dict[str, Any], category: str, foun
             "knodes": evaluation['knodes'],
             "best_line": evaluation['best_line'],
             "category": category,
+            "selection_category": category,
+            "label_category": OPTION_CATEGORIES[correct_answer],
             "options": option_values,
+            "selection_provenance": evaluation.get('selection_provenance'),
             "label_provenance": evaluation.get('label_provenance'),
             "engine_name": evaluation.get('engine_name'),
+            "engine_binary_sha256": evaluation.get('engine_binary_sha256'),
             "engine_nodes": evaluation.get('engine_nodes'),
             "engine_threads": evaluation.get('engine_threads'),
             "engine_hash_mb": evaluation.get('engine_hash_mb'),
+            "mate_in": evaluation.get('mate_in'),
+            "seldepth": evaluation.get('seldepth'),
+            "nodes": evaluation.get('nodes'),
         }
     )
 
@@ -216,8 +234,6 @@ def find_centipawn_eval_tasks(cfg):
     position_hashes = set()
 
     evaluations = _load_evaluations(cfg.data_path, cfg.max_evaluations if cfg.max_evaluations > 0 else None)
-    evaluations = _relabel_with_fixed_engine(evaluations, cfg)
-
     eval_buckets = defaultdict(list)
 
     for evaluation in tqdm.tqdm(evaluations, desc="Categorizing evaluations"):
@@ -230,20 +246,34 @@ def find_centipawn_eval_tasks(cfg):
             continue
         eval_buckets[category].append(evaluation)
 
+    selected = []
+    for category in EVAL_CATEGORIES:
+        if len(eval_buckets[category]) < cfg.tasks_per_category:
+            raise ValueError(
+                f"Need {cfg.tasks_per_category} candidates for {category}, "
+                f"found {len(eval_buckets[category])}"
+            )
     for category, evaluations in eval_buckets.items():
         if not evaluations:
             continue
 
         random.shuffle(evaluations)
         selected_evaluations = evaluations[:cfg.tasks_per_category]
-
         for evaluation in selected_evaluations:
-            if found_counter[category] >= cfg.tasks_per_category:
-                break
-            task = generate_centipawn_eval_task(evaluation, category, found_counter)
-            found_counter[category] += 1
-            found.append(task)
-            print(f"Found judgment task in category {category}, total found: {found_counter}")
+            candidate = dict(evaluation)
+            candidate['selection_category'] = category
+            selected.append(candidate)
+
+    fixed_evaluations = _evaluate_with_fixed_engine(selected, cfg)
+    if len(fixed_evaluations) != len(selected):
+        raise ValueError("The fixed engine did not return a score for every selected position")
+
+    for evaluation in fixed_evaluations:
+        category = evaluation['selection_category']
+        task = generate_centipawn_eval_task(evaluation, category, found_counter)
+        found_counter[category] += 1
+        found.append(task)
+        print(f"Found judgment task in category {category}, total found: {found_counter}")
 
     return found
 
@@ -254,9 +284,9 @@ def parse_args():
     parser.add_argument("--max_evaluations", type=int, default=10000)
     parser.add_argument("--tasks_per_category", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--stockfish_path", type=str, default=None,
-                        help="Optional pinned Stockfish binary used to regenerate every label")
-    parser.add_argument("--stockfish_nodes", type=int, default=200000)
+    parser.add_argument("--stockfish_path", type=str, required=True,
+                        help="Pinned Stockfish binary used to generate every reference label")
+    parser.add_argument("--stockfish_nodes", type=int, default=100000)
     parser.add_argument("--stockfish_threads", type=int, default=1)
     parser.add_argument("--stockfish_hash_mb", type=int, default=128)
     return parser.parse_args()

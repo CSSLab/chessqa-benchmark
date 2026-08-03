@@ -16,7 +16,7 @@ The evaluation code provides:
 - Overall reporting includes item-micro, equal-task macro, and equal-category macro scores.
 - Source-balanced scores, source-cluster intervals, and source-disjoint slices.
 - Semantic variants carry stable base-example IDs and the relevance judge defaults to the same FEN-before + move context shown to evaluated models.
-- Position Judgment can be regenerated with a pinned Stockfish binary and fixed node budget; simple chess baselines are included.
+- Position Judgment labels use Stockfish 16 at 100,000 nodes per position, one thread, and 128 MB hash; full per-item engine provenance and simple chess baselines are included.
 
 ## Repository layout
 
@@ -102,6 +102,13 @@ python analysis/semantic_controls.py benchmark/semantic.jsonl semantic_controls
 
 This generates comments-only, move-only, FEN-only, shuffled-FEN, and shuffled-move views without changing options or labels.
 
+Each view can be evaluated with the standard runner, for example:
+
+```bash
+python eval/run_openrouter.py --dataset-root semantic_controls \
+  --model "$MODEL_ID" --output-dir semantic_control_results --run-id controls-01
+```
+
 The relevance filter uses observable context by default:
 
 ```bash
@@ -112,23 +119,32 @@ python dataset/05_3_comment_judging.py --judge-context observable
 
 ## Position Judgment provenance and baselines
 
-The benchmark labels use the deepest available records in Lichess Evaluations. To create a fixed-engine reference set:
+Lichess Evaluations supplies the candidate positions and balanced selection strata. The five task types preserve those sampling strata, while `label_category` records the controlled gold bucket. Every released answer label is generated with Stockfish 16 at 100,000 nodes per position, one thread, and 128 MB hash. Each item stores the engine name, binary hash, node budget, depth, selective depth, node count, principal variation, and White-perspective score.
+
+To reproduce the released labels for the fixed set of positions:
+
+```bash
+python analysis/position_baselines.py benchmark/position_judgement.jsonl \
+  --stockfish /absolute/path/to/stockfish-16 --nodes 100000 \
+  --threads 1 --hash-mb 128 \
+  --reference-output generated/position_judgement.jsonl \
+  --output generated/position_baselines.json
+```
+
+To build a new balanced Position Judgment sample, provide the same controlled engine configuration:
 
 ```bash
 python dataset/04_position_judgement.py \
   --data_path data/raw/lichess_db_eval.jsonl.zst \
   --output_root generated/fixed_engine \
-  --stockfish_path /absolute/path/to/stockfish \
-  --stockfish_nodes 200000 --stockfish_threads 1 --stockfish_hash_mb 128
+  --stockfish_path /absolute/path/to/stockfish-16 \
+  --stockfish_nodes 100000 --stockfish_threads 1 --stockfish_hash_mb 128
 ```
 
-Evaluate material-only, transparent static, cross-validated material/piece-square, and optional shallow-engine baselines:
+Evaluate material-only, transparent static, and cross-validated material/piece-square baselines:
 
 ```bash
 python analysis/position_baselines.py benchmark/position_judgement.jsonl
-python analysis/position_baselines.py benchmark/position_judgement.jsonl \
-  --stockfish /absolute/path/to/stockfish --nodes 100000 \
-  --threads 1 --hash-mb 128 --output position_validation.json
 ```
 
 ## Rebuild datasets
@@ -137,4 +153,4 @@ Builders live in `dataset/01_structural.py` through `dataset/05_semantic.py`. So
 
 ## Licensing and provenance
 
-The repository's MIT license covers code. The benchmark release includes all 3,500 evaluation items. Lichess-derived items retain their source provenance, and the Semantic comments come from a purchased copy of ChessBase~17. Benchmark data retains the terms associated with its source material.
+The repository's MIT license covers code. The benchmark release includes all 3,500 evaluation items. Lichess-derived candidate positions retain their source provenance, Position Judgment answer labels carry controlled Stockfish provenance, and the Semantic comments come from a purchased copy of ChessBase~17. Benchmark data retains the terms associated with its source material.

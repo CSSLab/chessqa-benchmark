@@ -37,6 +37,16 @@ class CompleteReleaseTests(unittest.TestCase):
             self.assertIn("Analyze several moves ahead", question)
             self.assertEqual(question.count("Analyze step by step and explain your reasoning."), 1)
             self.assertIn("Example final answer:", question)
+            metadata = row["metadata"]
+            self.assertEqual(metadata["label_provenance"], "stockfish_fixed_nodes")
+            self.assertEqual(metadata["engine_name"], "Stockfish 16")
+            self.assertEqual(metadata["engine_nodes"], 100000)
+            self.assertEqual(metadata["engine_threads"], 1)
+            self.assertEqual(metadata["engine_hash_mb"], 128)
+            self.assertRegex(metadata["engine_binary_sha256"], r"^[0-9a-f]{64}$")
+            options = [-400, -200, 0, 200, 400]
+            expected = min(options, key=lambda value: abs(value - metadata["actual_evaluation"]))
+            self.assertEqual(row["correct_answer"], str(expected))
 
     def test_task_prompts_match_operational_targets(self):
         def rows(filename):

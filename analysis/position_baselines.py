@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Chess-specific baselines for ChessQA Position Judgment.
+"""Chess-specific baselines and reference-label generation for Position Judgment.
 
-The script never changes benchmark labels.  It evaluates material-only, a
-small hand-written static evaluator, a cross-validated linear piece-square
-model, and (optionally) a fixed-node Stockfish run against the five released
-answer buckets.
+The released labels are produced by a pinned, fixed-node Stockfish run.  This
+script can reproduce those labels and evaluates material-only, a small
+hand-written static evaluator, and a cross-validated linear piece-square model
+against the five reference buckets.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -104,29 +105,93 @@ def cross_validated_linear(items: List[dict], folds: int, seed: int) -> List[int
 
 def fixed_engine_predictions(
     items: List[dict], path: str, nodes: int, threads: int, hash_mb: int
-) -> Tuple[List[int], Dict[str, Any]]:
+) -> Tuple[List[int], Dict[str, Any], List[Dict[str, Any]]]:
     engine = chess.engine.SimpleEngine.popen_uci(path)
     predictions = []
+    references = []
     try:
         engine.configure({"Threads": threads, "Hash": hash_mb})
         engine_info = dict(engine.id)
         for item in items:
             info = engine.analyse(chess.Board(item["input"]), chess.engine.Limit(nodes=nodes))
-            score = info["score"].pov(chess.WHITE).score(mate_score=100000)
-            predictions.append(snap(float(score)))
+            score = info["score"].pov(chess.WHITE)
+            centipawns = score.score(mate_score=100000)
+            if centipawns is None:
+                raise ValueError(f"Stockfish returned no score for {item['task_id']}")
+            predictions.append(snap(float(centipawns)))
+            references.append({
+                "centipawns": int(centipawns),
+                "mate_in": score.mate(),
+                "depth": info.get("depth"),
+                "seldepth": info.get("seldepth"),
+                "nodes": info.get("nodes"),
+                "nps": info.get("nps"),
+                "hashfull": info.get("hashfull"),
+                "tbhits": info.get("tbhits"),
+                "best_line": " ".join(move.uci() for move in info.get("pv", [])),
+            })
     finally:
         engine.quit()
-    return predictions, {
+    binary = Path(path).resolve()
+    engine_run = {
         "binary": str(Path(path).resolve()),
+        "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "engine": engine_info,
         "nodes_per_position": nodes,
         "threads": threads,
         "hash_mb": hash_mb,
     }
+    return predictions, engine_run, references
+
+
+def write_reference_dataset(
+    items: List[dict], references: List[Dict[str, Any]], engine_run: Dict[str, Any], output: Path
+) -> None:
+    """Write the benchmark with fixed-engine labels and full provenance."""
+    category_for_answer = {
+        -400: "losing",
+        -200: "disadvantage",
+        0: "neutral",
+        200: "advantage",
+        400: "winning",
+    }
+    engine_name = engine_run["engine"]["name"]
+    rendered = []
+    for item, reference in zip(items, references):
+        updated = dict(item)
+        metadata = dict(item.get("metadata") or {})
+        answer = snap(reference["centipawns"])
+        metadata.update({
+            "selection_provenance": "lichess_evaluations",
+            "selection_category": metadata.get("selection_category", metadata.get("category")),
+            "actual_evaluation": reference["centipawns"],
+            "mate_in": reference["mate_in"],
+            "depth": reference["depth"],
+            "seldepth": reference["seldepth"],
+            "nodes": reference["nodes"],
+            "knodes": (reference["nodes"] or 0) // 1000,
+            "nps": reference["nps"],
+            "hashfull": reference["hashfull"],
+            "tbhits": reference["tbhits"],
+            "best_line": reference["best_line"],
+            "label_category": category_for_answer[answer],
+            "label_provenance": "stockfish_fixed_nodes",
+            "engine_name": engine_name,
+            "engine_binary_sha256": engine_run["binary_sha256"],
+            "engine_nodes": engine_run["nodes_per_position"],
+            "engine_threads": engine_run["threads"],
+            "engine_hash_mb": engine_run["hash_mb"],
+        })
+        updated["correct_answer"] = str(answer)
+        updated["metadata"] = metadata
+        rendered.append(json.dumps(updated, ensure_ascii=False))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("\n".join(rendered) + "\n", encoding="utf-8")
 
 
 def summarize(items: List[dict], predictions: Iterable[int]) -> Dict[str, object]:
     by_type = defaultdict(list)
+    by_label = defaultdict(list)
     confusion = defaultdict(lambda: defaultdict(int))
     correct = []
     disagreements = []
@@ -135,6 +200,7 @@ def summarize(items: List[dict], predictions: Iterable[int]) -> Dict[str, object
         hit = prediction == gold
         correct.append(hit)
         by_type[item["task_type"]].append(hit)
+        by_label[str(gold)].append(hit)
         confusion[str(gold)][str(prediction)] += 1
         if not hit:
             disagreements.append({
@@ -149,6 +215,10 @@ def summarize(items: List[dict], predictions: Iterable[int]) -> Dict[str, object
         "total": len(correct),
         "different": len(correct) - int(sum(correct)),
         "by_task": {key: float(np.mean(values)) for key, values in sorted(by_type.items())},
+        "by_label": {
+            key: float(np.mean(values))
+            for key, values in sorted(by_label.items(), key=lambda pair: int(pair[0]))
+        },
         "confusion": {
             gold: dict(sorted(predictions.items(), key=lambda pair: int(pair[0])))
             for gold, predictions in sorted(confusion.items(), key=lambda pair: int(pair[0]))
@@ -167,6 +237,11 @@ def main() -> None:
     parser.add_argument("--folds", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--reference-output",
+        type=Path,
+        help="Write fixed-engine labels and provenance to this benchmark JSONL",
+    )
     args = parser.parse_args()
 
     items = load_items(args.dataset)
@@ -176,11 +251,16 @@ def main() -> None:
         "linear_piece_square_cv": cross_validated_linear(items, args.folds, args.seed),
     }
     engine_run = None
+    references = None
     if args.stockfish:
-        engine_predictions, engine_run = fixed_engine_predictions(
+        engine_predictions, engine_run, references = fixed_engine_predictions(
             items, args.stockfish, args.nodes, args.threads, args.hash_mb
         )
         predictions[f"stockfish_{args.nodes}_nodes"] = engine_predictions
+    if args.reference_output and not args.stockfish:
+        parser.error("--reference-output requires --stockfish")
+    if args.reference_output:
+        write_reference_dataset(items, references, engine_run, args.reference_output)
     report = {
         "dataset": str(args.dataset),
         "n_items": len(items),
@@ -193,6 +273,7 @@ def main() -> None:
     }
     rendered = json.dumps(report, indent=2, sort_keys=True)
     if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered + "\n", encoding="utf-8")
     print(rendered)
 
