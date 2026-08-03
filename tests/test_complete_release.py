@@ -23,6 +23,21 @@ class CompleteReleaseTests(unittest.TestCase):
             total += len(rows)
         self.assertEqual(total, 3500)
 
+    def test_position_judgment_rows_use_canonical_fields(self):
+        path = ROOT / "benchmark" / "position_judgement.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        self.assertEqual(len(rows), 500)
+        for row in rows:
+            self.assertTrue(row["task_id"].startswith("position_judgment_"))
+            self.assertTrue(row["task_type"].startswith("position_judgment_"))
+            self.assertEqual(row["task_category"], "Position Judgment")
+            question = row["question"]
+            self.assertIn("Analyze several moves ahead", question)
+            self.assertEqual(question.count("Analyze step by step and explain your reasoning."), 1)
+            self.assertIn("Example final answer:", question)
+            self.assertNotIn("Analyze a moves", question)
+            self.assertNotIn("Example final answers:", question)
+
 
 if __name__ == "__main__":
     unittest.main()
