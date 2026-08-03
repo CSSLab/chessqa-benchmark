@@ -508,7 +508,7 @@ def generate_fen_after_moves_task(game_id: str, start_fen: str, moves: List[str]
         task_type=f"structural_state_tracking_{task_subtype}",
         task_category="Structural",
         input=f"{start_fen} | {moves_str}",
-        question=construct_prompt(prefix, task_description, suffix).replace("CONTEXT_PLACEHOLDER", ""),
+        question=construct_prompt(prefix, task_description, suffix),
         format_examples=FORMAT_EXAMPLES_FEN,
         correct_answer=final_fen,
         answer_type="single",

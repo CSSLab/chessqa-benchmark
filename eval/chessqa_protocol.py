@@ -267,6 +267,44 @@ def legal_double_check_moves(value: str) -> List[str]:
     return sorted(moves)
 
 
+def legal_discovered_check_moves(value: str) -> List[str]:
+    """Enumerate full UCI moves that uncover a sliding-piece check."""
+    board = _board(value)
+    moving_color = board.turn
+    enemy_king = board.king(not moving_color)
+    if enemy_king is None:
+        return []
+    moves: List[str] = []
+    for move in list(board.legal_moves):
+        before = board.copy()
+        board.push(move)
+        try:
+            if not board.is_check():
+                continue
+            for checker in board.checkers():
+                if checker == move.to_square:
+                    continue
+                piece = board.piece_at(checker)
+                if piece is None or piece.color != moving_color:
+                    continue
+                if piece.piece_type not in (chess.ROOK, chess.BISHOP, chess.QUEEN):
+                    continue
+                between = chess.SquareSet(chess.between(checker, enemy_king))
+                if move.from_square not in between:
+                    continue
+                if any(
+                    before.piece_at(square) is not None
+                    for square in between
+                    if square != move.from_square
+                ):
+                    continue
+                moves.append(move.uci())
+                break
+        finally:
+            board.pop()
+    return sorted(set(moves))
+
+
 def _canonical_multi_item(task_type: str, item: str) -> str:
     rendered = item.strip().lower()
     if task_type == "motifs_battery" and ">" in rendered:
@@ -276,9 +314,14 @@ def _canonical_multi_item(task_type: str, item: str) -> str:
 
 def _expected_multi_items(task: Mapping[str, Any]) -> set[str]:
     task_type = str(task.get("task_type", ""))
-    if task_type == "motifs_double_check":
+    if task_type in {"motifs_discovered_check", "motifs_double_check"}:
         try:
-            moves = legal_double_check_moves(str(task.get("input", "")))
+            enumerator = (
+                legal_discovered_check_moves
+                if task_type == "motifs_discovered_check"
+                else legal_double_check_moves
+            )
+            moves = enumerator(str(task.get("input", "")))
         except ValueError:
             moves = []
         if moves:
@@ -432,6 +475,7 @@ __all__ = [
     "extract_content_answer",
     "extract_protocol_answer",
     "format_task_prompt",
+    "legal_discovered_check_moves",
     "legal_mating_moves",
     "legal_double_check_moves",
     "piece_context",

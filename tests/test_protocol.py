@@ -48,6 +48,14 @@ class ProtocolTests(unittest.TestCase):
             scored = score_response(task, f"FINAL ANSWER: {answer}", {}, 8192)
             self.assertTrue(scored["is_correct"])
 
+    def test_discovered_check_promotions_use_full_uci(self):
+        rows = [json.loads(line) for line in (ROOT / "benchmark" / "motifs.jsonl").read_text().splitlines()]
+        task = next(row for row in rows if row["task_id"] == "motifs_discovered_check_0001")
+        answer = "d7d8b, d7d8n, d7d8q, d7d8r"
+        self.assertEqual(accepted_answers(task), [answer])
+        self.assertTrue(score_response(task, f"FINAL ANSWER: {answer}", {}, 8192)["is_correct"])
+        self.assertFalse(score_response(task, "FINAL ANSWER: d7d8", {}, 8192)["is_correct"])
+
     def test_motif_prompt_and_canonicalization(self):
         rows = [json.loads(line) for line in (ROOT / "benchmark" / "motifs.jsonl").read_text().splitlines()]
         by_id = {row["task_id"]: row for row in rows}

@@ -12,6 +12,8 @@ import json
 
 FORMAT_EXAMPLES_UCI_MOVE = ["e2e4, c2b1q",
                             "g1f3, a2a1q"]
+FORMAT_EXAMPLES_SINGLE_UCI_MOVE = ["e2e4",
+                                   "c2b1q"]
 FORMAT_EXAMPLES_UCI_MOVE_SAME_START = ["e2e3, e2e4",
                                        "d7d5, d7d6"]
 FORMAT_EXAMPLES_LINE = ["d1>d7>d8, a2>e2>h2", 
@@ -211,5 +213,3 @@ def read_puzzles(file_path):
     print(f"Time to shuffle: {readable_time(time.time() - t_1)}", flush=True)
     
     return df
-    
-    

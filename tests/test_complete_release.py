@@ -1,5 +1,7 @@
 import json
+import re
 import unittest
+from collections import Counter
 from pathlib import Path
 
 
@@ -35,6 +37,58 @@ class CompleteReleaseTests(unittest.TestCase):
             self.assertIn("Analyze several moves ahead", question)
             self.assertEqual(question.count("Analyze step by step and explain your reasoning."), 1)
             self.assertIn("Example final answer:", question)
+
+    def test_task_prompts_match_operational_targets(self):
+        def rows(filename):
+            path = ROOT / "benchmark" / filename
+            return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+        semantic = rows("semantic.jsonl")
+        base_counts = Counter(row["metadata"]["base_example_id"] for row in semantic)
+        self.assertEqual(len(base_counts), 100)
+        self.assertEqual(set(base_counts.values()), {4})
+        for row in semantic:
+            self.assertIn("source annotated-game record", row["question"])
+
+        short = rows("short_tactics.jsonl")
+        uci = re.compile(r"^[a-h][1-8][a-h][1-8][qrbn]?$")
+        for row in short:
+            self.assertIn("intended first solution move", row["question"])
+            self.assertEqual(row["format_examples"], ["e2e4", "c2b1q"])
+            self.assertTrue(all(uci.fullmatch(example) for example in row["format_examples"]))
+
+        for row in rows("position_judgement.jsonl"):
+            self.assertIn("reference Stockfish-family evaluation", row["question"])
+
+        motifs = rows("motifs.jsonl")
+        skewers = [row for row in motifs if row["task_type"] == "motifs_skewer"]
+        self.assertEqual(len(skewers), 100)
+        for row in skewers:
+            self.assertIn("detector-defined skewer", row["question"])
+
+        for filename in (
+            "structural.jsonl",
+            "motifs.jsonl",
+            "short_tactics.jsonl",
+            "position_judgement.jsonl",
+            "semantic.jsonl",
+        ):
+            for row in rows(filename):
+                self.assertEqual(
+                    row["question"].count("CONTEXT_PLACEHOLDER"),
+                    1,
+                    row["task_id"],
+                )
+                self.assertEqual(
+                    row["question"].count("FORMAT_EXAMPLE_PLACEHOLDER"),
+                    1,
+                    row["task_id"],
+                )
+                self.assertEqual(
+                    row["question"].count("Analyze step by step and explain your reasoning."),
+                    1,
+                    row["task_id"],
+                )
 
 
 if __name__ == "__main__":

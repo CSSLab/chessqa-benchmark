@@ -54,7 +54,7 @@ def generate_skewer_task(board, found_counter, puzzle_id):
     if not skewers:
         return None
     prefix = f"You are given a chess position in FEN: {board.fen()}.\n"
-    task_description = "Identify all skewers in this position. A skewer occurs when a more valuable piece is attacked first and forced to move, exposing a less valuable piece behind it to be captured."
+    task_description = "Identify all detector-defined skewers in this position. A detector-defined skewer is an unobstructed ray on which a bishop, rook, or queen attacks a more valuable enemy front piece and a less valuable enemy piece is the next occupied square behind it."
     task_description += " For each skewer, provide the key squares in the format: skewering_piece>front_piece>back_piece (e.g., FORMAT_EXAMPLE_PLACEHOLDER).\n"
     suffix = "If more than one, separate with a comma and a space."
     answer_parts = [f"{skewering_square}>{front_square}>{back_square}" for skewering_square, front_square, back_square in skewers]
@@ -278,7 +278,7 @@ def generate_battery_task(board, found_counter, puzzle_id):
     if not batteries:
         return None
     prefix = f"You are given a chess position in FEN: {board.fen()}.\n"
-    task_description = "Identify every battery (2 or more aligned long-range pieces, e.g, RR/RQ/QQ on files or ranks, BQ/BB/QQ on diagonals, of the same color with no pieces between)."
+    task_description = "Identify every battery (2 or more aligned long-range pieces, e.g., RR/RQ/QQ on files or ranks, BQ/BB/QQ on diagonals, of the same color with no pieces between)."
     task_description += " Report each battery as the squares of the pieces in alphabetical order (a>h, 1>8), using '>' to separate squares in a battery and ',' to separate multiple batteries, e.g., FORMAT_EXAMPLE_PLACEHOLDER.\n"
     suffix = "If more than one, separate with a comma and a space."
     answer_parts = sorted(">".join(sorted(group)) for group in batteries)

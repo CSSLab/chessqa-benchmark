@@ -2,6 +2,8 @@
 
 ChessQA is a FEN-based, text-only chess QA benchmark with 50 tasks and 3,500 items across Structural (1,100), Motifs (600), Short Tactics (900), Position Judgment (500), and Semantic (400). The categories are complementary diagnostic views, not a difficulty hierarchy.
 
+Prompt wording follows each operational target: Short Tactics asks for the Lichess puzzle's intended first solution move, Position Judgment asks for the reference Stockfish-family bucket, Semantic asks for the comment associated with the displayed record, and detector-defined Motif prompts state the implemented geometric relation directly.
+
 All 3,500 items are included and can be evaluated with the same runner.
 
 The evaluation code provides:

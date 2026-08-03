@@ -182,7 +182,7 @@ def generate_centipawn_eval_task(evaluation: Dict[str, Any], category: str, foun
     correct_answer = _get_correct_answer(evaluation['best_evaluation'], option_values)
 
     prefix = f"You are analyzing a chess position in FEN: {evaluation['fen']}.\n"
-    task_description = "Estimate the Stockfish evaluation in centipawns (from White's perspective). Think deeper about this position: do not just evaluate the current board state. Consider the most likely moves for both sides and how the centipawn evaluation would change as the position develops. Analyze several moves ahead: what does the future of this position look like? How would a strong engine assess this position after calculating many moves deep?\n"
+    task_description = "Estimate the reference Stockfish-family evaluation in centipawns (from White's perspective). Think deeper about this position: do not just evaluate the current board state. Consider the most likely moves for both sides and how the centipawn evaluation would change as the position develops. Analyze several moves ahead: what does the future of this position look like? How would a strong engine assess this position after calculating many moves deep?\n"
     suffix = f"Choose the closest evaluation from the following options: {', '.join(map(str, option_values))}.\nExample final answer: FORMAT_EXAMPLE_PLACEHOLDER"
 
     return ChessQuestionAnsweringTask(

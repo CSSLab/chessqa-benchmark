@@ -9,7 +9,7 @@ from utils import (
     make_pre_move,
     save_tasks,
     construct_prompt,
-    FORMAT_EXAMPLES_UCI_MOVE,
+    FORMAT_EXAMPLES_SINGLE_UCI_MOVE,
     ChessQuestionAnsweringTask
 )
 
@@ -82,8 +82,8 @@ def find_puzzles_by_rating(unique_puzzles, data, cfg):
         
         if found_counter[task_name] < cfg.N_sample_rating:
             prefix = f"You are given a chess position in FEN: {fen}.\n"
-            task_description = "Find the best move for the side to play.\n"
-            suffix = "Use UCI notation (e.g., FORMAT_EXAMPLE_PLACEHOLDER) for the final answer."
+            task_description = "Find the Lichess puzzle's intended first solution move for the side to play.\n"
+            suffix = "Use one UCI move (e.g., FORMAT_EXAMPLE_PLACEHOLDER) for the final answer."
             
             sample = ChessQuestionAnsweringTask(
                 task_id = f"short_tactics_rating_{task_name}_{found_counter[task_name]:04d}",
@@ -91,7 +91,7 @@ def find_puzzles_by_rating(unique_puzzles, data, cfg):
                 task_category = "Short Tactics",
                 input = fen,
                 question = construct_prompt(prefix, task_description, suffix),
-                format_examples = FORMAT_EXAMPLES_UCI_MOVE,
+                format_examples = FORMAT_EXAMPLES_SINGLE_UCI_MOVE,
                 correct_answer = move,
                 answer_type="single",
                 metadata = {
@@ -150,8 +150,8 @@ def find_puzzles_by_theme(unique_puzzles, data, cfg):
         for primary_theme in sorted(intersecting_themes):
             if found_counter[primary_theme] < cfg.N_sample_theme:
                 prefix = f"You are given a chess position in FEN: {fen}.\n"
-                task_description = "Find the best move for the side to play.\n"
-                suffix = "Use UCI notation (e.g., FORMAT_EXAMPLE_PLACEHOLDER) for the final answer."
+                task_description = "Find the Lichess puzzle's intended first solution move for the side to play.\n"
+                suffix = "Use one UCI move (e.g., FORMAT_EXAMPLE_PLACEHOLDER) for the final answer."
                 
                 sample = ChessQuestionAnsweringTask(
                     task_id = f"short_tactics_theme_{primary_theme}_{found_counter[primary_theme]:04d}",
@@ -159,7 +159,7 @@ def find_puzzles_by_theme(unique_puzzles, data, cfg):
                     task_category = "Short Tactics",
                     input = fen,
                     question = construct_prompt(prefix, task_description, suffix),
-                    format_examples = FORMAT_EXAMPLES_UCI_MOVE,
+                    format_examples = FORMAT_EXAMPLES_SINGLE_UCI_MOVE,
                     correct_answer = move,
                     answer_type="single",
                     metadata = {

@@ -238,10 +238,10 @@ def generate_comment_mcq_task(item: Dict[str, Any], variant: str, options: List[
     # Create multiple choice format
     option_text = "\n".join([f"{chr(65+i)}. {opt}" for i, opt in enumerate(shuffled_options)])
 
-    task_description = f"Select the commentary that best describes this position and move.\n\nOptions:\n{option_text}\n"
+    task_description = f"Select the option containing the commentary associated with this position and move in the source annotated-game record.\n\nOptions:\n{option_text}\n"
     suffix = "Example format: FORMAT_EXAMPLE_PLACEHOLDER"
 
-    full_question = construct_prompt(prefix, task_description, suffix).replace("CONTEXT_PLACEHOLDER", "")
+    full_question = construct_prompt(prefix, task_description, suffix)
 
     return ChessQuestionAnsweringTask(
         task_id=f"semantic_{variant}_{idx:04d}",
