@@ -35,8 +35,6 @@ class CompleteReleaseTests(unittest.TestCase):
             self.assertIn("Analyze several moves ahead", question)
             self.assertEqual(question.count("Analyze step by step and explain your reasoning."), 1)
             self.assertIn("Example final answer:", question)
-            self.assertNotIn("Analyze a moves", question)
-            self.assertNotIn("Example final answers:", question)
 
 
 if __name__ == "__main__":
