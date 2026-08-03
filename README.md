@@ -23,7 +23,7 @@ The evaluation code provides:
 - `benchmark/`: the complete 3,500-item benchmark in five category files
 - `dataset/`: dataset builders
 - `eval/`: OpenRouter runner and shared protocol/scoring code
-- `analysis/`: overlap/label audits, rank stability, Semantic controls, and Position Judgment baselines
+- `analysis/`: overlap/label audits, rank stability, and Position Judgment baselines
 - `tests/`: scoring, prompt, and dataset tests
 
 ## Install
@@ -93,29 +93,6 @@ python analysis/rank_stability.py results/model-a.jsonl results/model-b.jsonl \
 ```
 
 The analysis clusters shared PuzzleIds, Semantic base examples, Position Judgment position IDs, and Structural state-tracking games. It also reports source-balanced Accuracy and a slice that removes FENs or PuzzleIds shared across categories.
-
-## Semantic shortcut controls
-
-```bash
-python analysis/semantic_controls.py benchmark/semantic.jsonl semantic_controls
-```
-
-This generates comments-only, move-only, FEN-only, shuffled-FEN, and shuffled-move views without changing options or labels.
-
-Each view can be evaluated with the standard runner, for example:
-
-```bash
-python eval/run_openrouter.py --dataset-root semantic_controls \
-  --model "$MODEL_ID" --output-dir semantic_control_results --run-id controls-01
-```
-
-The relevance filter uses observable context by default:
-
-```bash
-python dataset/05_3_comment_judging.py --judge-context observable
-```
-
-`--judge-context historical` is retained only as a diagnostic and must not be used as the sole answerability filter.
 
 ## Position Judgment provenance and baselines
 
